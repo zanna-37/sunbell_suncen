@@ -121,6 +121,10 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         return self._blind.channel
 
     @property
+    def tilt_level(self) -> int:
+        return self._tilt_level
+
+    @property
     def is_closed(self) -> bool | None:
         return None if self._position is None else self._position == 0
 
@@ -228,14 +232,19 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         last_direction: str | None,
         tilt_level: int,
         position: int | None,
+        *,
+        update_position: bool = True,
     ) -> None:
         """Apply state predicted by send_group after a group burst sequence.
 
-        The bursts were already emitted at the remote level; this just keeps
-        each entity's optimistic state consistent with the physical motors.
+        last_direction=None leaves the recorded direction untouched (e.g. a
+        delta-only tilt doesn't change which fast movement was last). Pass
+        update_position=False to leave the position unchanged (also used by
+        tilt — tilting doesn't move the blind up or down).
         """
         if last_direction is not None:
             self._last_direction = last_direction
         self._tilt_level = tilt_level
-        self._position = position
+        if update_position:
+            self._position = position
         self.async_write_ha_state()

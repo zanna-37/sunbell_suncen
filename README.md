@@ -74,23 +74,29 @@ them to a group in one shot. The integration translates the high-level
 request into the most efficient SUNCEN burst sequence for the targeted
 channels, then updates each grouped entity's optimistic state to match.
 
-| Action               | Bursts (per remote)                                       |
-| -------------------- | --------------------------------------------------------- |
-| `open`               | 1 (`UP`)                                                  |
-| `close`              | 1 (`DOWN`)                                                |
-| `stop`               | 1 (`STOP`)                                                |
-| `set_tilt_position`  | 1..4: anchor at the closer extreme + step toward target  |
+| Action               | Bursts                                                            |
+| -------------------- | ----------------------------------------------------------------- |
+| `open`               | 1 (`UP`), per remote                                              |
+| `close`              | 1 (`DOWN`), per remote                                            |
+| `stop`               | 1 (`STOP`), per remote                                            |
+| `set_tilt_position`  | per `(remote, starting tilt level)` group: \|delta\| × `LONG_UP` or `LONG_DOWN` |
 
-Tilt details: `tilt_position` is mapped to a discrete level 1..7. Targets
-1 (closed-down) and 7 (closed-up) collapse to a single anchor burst.
-Targets 2..4 are anchored at `DOWN` then stepped up with `LONG_UP`; targets
-5..6 are anchored at `UP` then stepped down with `LONG_DOWN`. Anchoring
-always brings the whole group into a known state first so the group ends
-up tilt-aligned regardless of where each blind started.
+Tilt details: `tilt_position` is mapped to a discrete level 1..7. Selected
+blinds are grouped by their current tilt level — blinds sharing the same
+start receive the same multi-channel burst sequence. Each group emits
+exactly `|target − start|` `LONG_UP` (delta > 0) or `LONG_DOWN` (delta < 0)
+bursts; groups already at the target emit nothing. No anchoring — the
+integration trusts each blind's recorded tilt level. Because tilt only
+works when the centralina's `LONG_` bursts match the motor's last
+direction, do an `open` or `close` first if a blind's tilt has drifted out
+of sync.
+
+`set_tilt_position` requires entity or device targets (so the per-blind
+starting level is known); raw `remote` + `channels` is rejected for tilt.
 
 **By target (recommended).** Pick the cover entities — or whole remote
 devices — you want to move together; the integration groups them by remote
-and emits one burst sequence per remote.
+and emits one burst sequence per group.
 
 ```yaml
 action: sunbell_suncen.send_group

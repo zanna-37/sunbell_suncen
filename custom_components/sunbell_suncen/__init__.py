@@ -32,7 +32,6 @@ from .const import (
     DOMAIN,
     REMOTES,
     SERVICE_SEND_GROUP,
-    TILT_LEVELS,
     TILT_LEVEL_DOWN_ANCHOR,
     TILT_LEVEL_UP_ANCHOR,
 )
@@ -143,44 +142,39 @@ def _prune_orphan_devices(
                 break
 
 
-def _plan_bursts(action: str, target_level: int | None) -> list[str]:
-    """Minimum SUNCEN burst sequence to drive a group to the desired end state.
-
-    For open/close/stop: a single fast burst is enough. For set_tilt_position:
-    anchor at the closer extreme (DOWN for levels 1..4, UP for levels 5..7),
-    then step toward the target with LONG_UP / LONG_DOWN. Anchoring directly
-    onto an extreme (1 or 7) needs no stepping and no extra-step padding.
-    """
+def _plan_fast(action: str) -> list[str]:
+    """Single-burst plan for open / close / stop."""
     if action == ACTION_OPEN:
         return ["UP"]
     if action == ACTION_CLOSE:
         return ["DOWN"]
     if action == ACTION_STOP:
         return ["STOP"]
-    assert action == ACTION_SET_TILT_POSITION
-    if target_level == TILT_LEVEL_DOWN_ANCHOR:
-        return ["DOWN"]
-    if target_level == TILT_LEVEL_UP_ANCHOR:
-        return ["UP"]
-    if target_level <= TILT_LEVELS // 2 + 1:
-        return ["DOWN", *["LONG_UP"] * (target_level - TILT_LEVEL_DOWN_ANCHOR)]
-    return ["UP", *["LONG_DOWN"] * (TILT_LEVEL_UP_ANCHOR - target_level)]
+    raise ValueError(f"_plan_fast called with non-fast action {action!r}")
 
 
-def _end_state(
-    action: str, target_level: int | None
-) -> tuple[str, int, int] | None:
-    """(last_direction, tilt_level, position) after _plan_bursts; None means no update."""
+def _plan_tilt(start_level: int, target_level: int) -> list[str]:
+    """Delta-only tilt plan: |target - start| × LONG_UP or LONG_DOWN, no anchor.
+
+    Blinds with the same start_level reach target_level with the same burst
+    count and direction, so the caller groups them and emits one multi-channel
+    burst per step.
+    """
+    delta = target_level - start_level
+    if delta > 0:
+        return ["LONG_UP"] * delta
+    if delta < 0:
+        return ["LONG_DOWN"] * (-delta)
+    return []
+
+
+def _end_state_fast(action: str) -> tuple[str, int, int] | None:
+    """(last_direction, tilt_level, position) after a fast action; None for stop."""
     if action == ACTION_OPEN:
         return "UP", TILT_LEVEL_UP_ANCHOR, 100
     if action == ACTION_CLOSE:
         return "DOWN", TILT_LEVEL_DOWN_ANCHOR, 0
-    if action == ACTION_STOP:
-        return None
-    assert action == ACTION_SET_TILT_POSITION and target_level is not None
-    if target_level <= TILT_LEVELS // 2 + 1:
-        return "DOWN", target_level, 0
-    return "UP", target_level, 100
+    return None
 
 
 def _ensure_services_registered(hass: HomeAssistant) -> None:
@@ -200,84 +194,174 @@ def _ensure_services_registered(hass: HomeAssistant) -> None:
             raise vol.Invalid(
                 "tilt_position only applies when action is 'set_tilt_position'."
             )
-        target_level = (
-            tilt_position_to_level(tilt_position)
-            if action == ACTION_SET_TILT_POSITION
-            else None
-        )
 
-        channels_by_remote: dict[str, set[int]] = defaultdict(set)
-        entities_by_remote: dict[str, list[SunbellBlind]] = defaultdict(list)
-
-        # Target mode: resolve entity/device/area picks to (remote, channel) pairs.
-        selected = service_helper.async_extract_referenced_entity_ids(hass, call)
-        entity_ids = selected.referenced | selected.indirectly_referenced
-        if entity_ids:
-            ent_reg = er.async_get(hass)
-            blinds = _blinds_by_entity_id(hass)
-            for entity_id in entity_ids:
-                reg_entry = ent_reg.async_get(entity_id)
-                if reg_entry is None or reg_entry.platform != DOMAIN:
-                    continue
-                remote, channel = _parse_unique_id(reg_entry.unique_id)
-                if remote is None:
-                    continue
-                channels_by_remote[remote].add(channel)
-                blind = blinds.get(entity_id)
-                if blind is not None:
-                    entities_by_remote[remote].append(blind)
-
-        # Raw mode: explicit remote + channels. End state still gets applied to
-        # any entities matching the channels (so the UI stays consistent).
-        raw_remote = data.get(CONF_REMOTE)
-        raw_channels = data.get(CONF_CHANNELS) or []
-        if raw_remote is not None and raw_channels:
-            channels_by_remote[raw_remote].update(int(c) for c in raw_channels)
-            blinds = _blinds_by_entity_id(hass)
-            for blind in blinds.values():
-                if (
-                    blind.remote_id == raw_remote
-                    and blind.channel in channels_by_remote[raw_remote]
-                    and blind not in entities_by_remote[raw_remote]
-                ):
-                    entities_by_remote[raw_remote].append(blind)
-        elif (raw_remote is None) ^ (not raw_channels):
-            raise vol.Invalid(
-                "Provide 'remote' and 'channels' together, or omit both and "
-                "select target entities/devices."
-            )
-
-        if not channels_by_remote:
+        resolved = _resolve_targets(hass, call, data, allow_raw_without_entity=action != ACTION_SET_TILT_POSITION)
+        if not resolved:
             raise vol.Invalid(
                 "send_group needs target entities/devices or a remote + channels pair."
             )
 
-        plan = _plan_bursts(action, target_level)
-        end_state = _end_state(action, target_level)
-
-        for remote, channel_set in channels_by_remote.items():
-            runtime = _runtime_for_remote(hass, remote)
-            if runtime is None:
-                raise vol.Invalid(
-                    f"Remote {remote!r} is not configured in any Sunbell SUNCEN entry"
-                )
-            channels = sorted(channel_set)
-            for burst_action in plan:
-                pulses = build_symbol_burst_signed(remote, channels, burst_action)
-                await hass.services.async_call(
-                    ESPHOME_DOMAIN,
-                    runtime.transmit_service_name,
-                    {"code": pulses},
-                    blocking=False,
-                )
-            if end_state is not None:
-                last_direction, tilt_level, position = end_state
-                for blind in entities_by_remote.get(remote, ()):
-                    blind.apply_group_update(last_direction, tilt_level, position)
+        if action == ACTION_SET_TILT_POSITION:
+            await _execute_tilt(hass, resolved, tilt_position_to_level(tilt_position))
+        else:
+            await _execute_fast(hass, resolved, action)
 
     hass.services.async_register(
         DOMAIN, SERVICE_SEND_GROUP, _handle_send_group, schema=SEND_GROUP_SCHEMA
     )
+
+
+def _resolve_targets(
+    hass: HomeAssistant,
+    call: ServiceCall,
+    data: dict,
+    *,
+    allow_raw_without_entity: bool,
+) -> list[tuple[str, int, "SunbellBlind | None"]]:
+    """Collect (remote, channel, blind) triples from entity/device targets and raw mode.
+
+    Each triple represents one channel to act on. `blind` is the live entity
+    when known (target mode and raw mode for already-configured channels) or
+    None when only raw remote/channels were given for an unconfigured channel.
+    `allow_raw_without_entity=False` rejects raw mode entirely — used by tilt
+    since it needs each blind's current_tilt_level.
+    """
+    resolved: list[tuple[str, int, SunbellBlind | None]] = []
+    seen: set[tuple[str, int]] = set()
+    blinds = _blinds_by_entity_id(hass)
+    blind_by_key: dict[tuple[str, int], SunbellBlind] = {
+        (b.remote_id, b.channel): b for b in blinds.values()
+    }
+
+    selected = service_helper.async_extract_referenced_entity_ids(hass, call)
+    entity_ids = selected.referenced | selected.indirectly_referenced
+    if entity_ids:
+        ent_reg = er.async_get(hass)
+        for entity_id in entity_ids:
+            reg_entry = ent_reg.async_get(entity_id)
+            if reg_entry is None or reg_entry.platform != DOMAIN:
+                continue
+            remote, channel = _parse_unique_id(reg_entry.unique_id)
+            if remote is None:
+                continue
+            key = (remote, channel)
+            if key in seen:
+                continue
+            seen.add(key)
+            resolved.append((remote, channel, blinds.get(entity_id)))
+
+    raw_remote = data.get(CONF_REMOTE)
+    raw_channels = data.get(CONF_CHANNELS) or []
+    if raw_remote is not None and raw_channels:
+        if not allow_raw_without_entity:
+            raise vol.Invalid(
+                "set_tilt_position requires entity/device targets so each "
+                "blind's current tilt level is known. Raw remote/channels "
+                "only supports open / close / stop."
+            )
+        for c in raw_channels:
+            ch = int(c)
+            key = (raw_remote, ch)
+            if key in seen:
+                continue
+            seen.add(key)
+            resolved.append((raw_remote, ch, blind_by_key.get(key)))
+    elif (raw_remote is None) ^ (not raw_channels):
+        raise vol.Invalid(
+            "Provide 'remote' and 'channels' together, or omit both and "
+            "select target entities/devices."
+        )
+
+    return resolved
+
+
+async def _execute_fast(
+    hass: HomeAssistant,
+    resolved: list[tuple[str, int, "SunbellBlind | None"]],
+    action: str,
+) -> None:
+    """Send one fast burst per remote to the union of its channels, then sync state."""
+    channels_by_remote: dict[str, set[int]] = defaultdict(set)
+    entities_by_remote: dict[str, list[SunbellBlind]] = defaultdict(list)
+    for remote, channel, blind in resolved:
+        channels_by_remote[remote].add(channel)
+        if blind is not None and blind not in entities_by_remote[remote]:
+            entities_by_remote[remote].append(blind)
+
+    plan = _plan_fast(action)
+    end_state = _end_state_fast(action)
+
+    for remote, channel_set in channels_by_remote.items():
+        runtime = _runtime_for_remote(hass, remote)
+        if runtime is None:
+            raise vol.Invalid(
+                f"Remote {remote!r} is not configured in any Sunbell SUNCEN entry"
+            )
+        channels = sorted(channel_set)
+        for burst_action in plan:
+            pulses = build_symbol_burst_signed(remote, channels, burst_action)
+            await hass.services.async_call(
+                ESPHOME_DOMAIN,
+                runtime.transmit_service_name,
+                {"code": pulses},
+                blocking=False,
+            )
+        if end_state is not None:
+            last_direction, tilt_level, position = end_state
+            for blind in entities_by_remote[remote]:
+                blind.apply_group_update(last_direction, tilt_level, position)
+
+
+async def _execute_tilt(
+    hass: HomeAssistant,
+    resolved: list[tuple[str, int, "SunbellBlind | None"]],
+    target_level: int,
+) -> None:
+    """Group channels by (remote, current_tilt_level) and send |delta| LONG_ bursts.
+
+    No anchoring: each group emits exactly |target - start| bursts in the
+    direction of the delta. Blinds with delta == 0 send nothing.
+    """
+    # (remote, start_level) -> (channels: set[int], entities: list[SunbellBlind])
+    groups: dict[tuple[str, int], tuple[set[int], list[SunbellBlind]]] = {}
+    for remote, channel, blind in resolved:
+        if blind is None:
+            continue
+        key = (remote, blind.tilt_level)
+        ch_set, ent_list = groups.setdefault(key, (set(), []))
+        ch_set.add(channel)
+        if blind not in ent_list:
+            ent_list.append(blind)
+
+    if not groups:
+        raise vol.Invalid(
+            "set_tilt_position needs target entities (or devices) — no live "
+            "Sunbell cover entity was found in the target."
+        )
+
+    for (remote, start_level), (ch_set, ent_list) in groups.items():
+        runtime = _runtime_for_remote(hass, remote)
+        if runtime is None:
+            raise vol.Invalid(
+                f"Remote {remote!r} is not configured in any Sunbell SUNCEN entry"
+            )
+        plan = _plan_tilt(start_level, target_level)
+        channels = sorted(ch_set)
+        for burst_action in plan:
+            pulses = build_symbol_burst_signed(remote, channels, burst_action)
+            await hass.services.async_call(
+                ESPHOME_DOMAIN,
+                runtime.transmit_service_name,
+                {"code": pulses},
+                blocking=False,
+            )
+        for blind in ent_list:
+            blind.apply_group_update(
+                last_direction=None,
+                tilt_level=target_level,
+                position=None,
+                update_position=False,
+            )
 
 
 def _blinds_by_entity_id(hass: HomeAssistant) -> dict[str, SunbellBlind]:
