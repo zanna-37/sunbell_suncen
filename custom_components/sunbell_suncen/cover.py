@@ -1,17 +1,22 @@
 """Cover entity per (remote, channel) pair.
 
 State machine summary:
-- Open/close/stop are optimistic fast actions; UP anchors tilt at level 7,
-  DOWN at level 1.
-- Tilt direction = opposite of last_direction (UP fast -> LONG_DOWN tilt,
-  DOWN fast -> LONG_UP tilt). A tilt that would need to reverse direction
-  anchor-resets first via the closer extreme.
-- Targets at level 1 or 7 get one extra LONG_ step beyond the computed
-  delta to push past motor desync into the mechanical limit.
-- First-ever tilt with no recorded last_direction auto-issues a short DOWN
-  to anchor at level 1, then proceeds.
-- last_direction + tilt_level + position survive HA restarts via
-  RestoreEntity.
+- Open/close are optimistic-with-settle: send the burst, mark tilt + position
+  unknown immediately, then schedule a background task that flips state to
+  the post-reversal anchor (UP -> level 1 / pos 100, DOWN -> level 7 / pos 0)
+  after `full_movement_time` seconds. A subsequent fast action cancels the
+  pending settle.
+- Stop invalidates both tilt and position; the motor halted somewhere we
+  can't predict.
+- Tilt only operates from the full-down anchor (level 7, pos 0). When asked
+  to set a tilt position, the entity first ensures it is at full-down (by
+  awaiting a pending settle that will land there, or by issuing a fresh
+  DOWN + sleep) and then steps LONG_DOWN exactly (7 - target) times.
+- `full_movement_time` per blind comes from the runtime helper (override or
+  entry default).
+- tilt_level + position survive HA restarts via RestoreEntity; an in-flight
+  settle does NOT survive (tilt becomes unknown until the user opens/closes
+  again).
 """
 from __future__ import annotations
 
@@ -32,13 +37,11 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from ._protocol.synth import build_symbol_burst_signed
 from .const import (
-    ATTR_LAST_DIRECTION,
     ATTR_POSITION_INTERNAL,
     ATTR_TILT_LEVEL,
     DOMAIN,
     MANUFACTURER,
     MODEL,
-    TILT_EXTREMES,
     TILT_LEVELS,
     TILT_LEVEL_DOWN_ANCHOR,
     TILT_LEVEL_UP_ANCHOR,
@@ -97,18 +100,23 @@ class SunbellBlind(RestoreEntity, CoverEntity):
             manufacturer=MANUFACTURER,
             model=f"{MODEL} remote {blind.remote}",
         )
-        self._last_direction: str | None = None
-        self._tilt_level: int = TILT_LEVEL_DOWN_ANCHOR
+        self._tilt_level: int | None = None
         self._position: int | None = None
         self._tilt_lock = asyncio.Lock()
+        self._settle_task: asyncio.Task[None] | None = None
+        self._settle_target: tuple[int, int] | None = None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
         last = await self.async_get_last_state()
         if last and last.attributes:
-            self._last_direction = last.attributes.get(ATTR_LAST_DIRECTION)
-            self._tilt_level = int(last.attributes.get(ATTR_TILT_LEVEL, TILT_LEVEL_DOWN_ANCHOR))
+            stored_tilt = last.attributes.get(ATTR_TILT_LEVEL)
+            self._tilt_level = int(stored_tilt) if stored_tilt is not None else None
             self._position = last.attributes.get(ATTR_POSITION_INTERNAL)
+
+    async def async_will_remove_from_hass(self) -> None:
+        self._cancel_settle()
+        await super().async_will_remove_from_hass()
 
     @property
     def remote_id(self) -> str:
@@ -119,8 +127,12 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         return self._blind.channel
 
     @property
-    def tilt_level(self) -> int:
+    def tilt_level(self) -> int | None:
         return self._tilt_level
+
+    @property
+    def travel_time(self) -> int:
+        return self._runtime.travel_time_for(self._blind)
 
     @property
     def is_closed(self) -> bool | None:
@@ -131,113 +143,177 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         return self._position
 
     @property
-    def current_cover_tilt_position(self) -> int:
-        return tilt_level_to_position(self._tilt_level)
+    def current_cover_tilt_position(self) -> int | None:
+        return None if self._tilt_level is None else tilt_level_to_position(self._tilt_level)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
-            ATTR_LAST_DIRECTION: self._last_direction,
             ATTR_TILT_LEVEL: self._tilt_level,
             ATTR_POSITION_INTERNAL: self._position,
         }
 
+    # ------------------------------------------------------------------ HA
     async def async_open_cover(self, **_kwargs: Any) -> None:
         await self._send("UP")
-        self._last_direction = "UP"
-        self._tilt_level = TILT_LEVEL_UP_ANCHOR
-        self._position = 100
+        self._begin_motion()
+        self._schedule_settle(TILT_LEVEL_UP_ANCHOR, 100)
         self.async_write_ha_state()
 
     async def async_close_cover(self, **_kwargs: Any) -> None:
         await self._send("DOWN")
-        self._last_direction = "DOWN"
-        self._tilt_level = TILT_LEVEL_DOWN_ANCHOR
-        self._position = 0
+        self._begin_motion()
+        self._schedule_settle(TILT_LEVEL_DOWN_ANCHOR, 0)
         self.async_write_ha_state()
 
     async def async_stop_cover(self, **_kwargs: Any) -> None:
-        # Motor halts mid-flight; we don't know where it ended up, so position
-        # and tilt_level stay where they were optimistically.
         await self._send("STOP")
+        self._cancel_settle()
+        self._tilt_level = None
+        self._position = None
         self.async_write_ha_state()
 
     async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
         target = tilt_position_to_level(kwargs[ATTR_TILT_POSITION])
         async with self._tilt_lock:
-            await self._move_to_tilt_level(target)
+            await self._ensure_at_full_down()
+            delta = TILT_LEVEL_DOWN_ANCHOR - target
+            for _ in range(delta):
+                await self._send("LONG_DOWN")
+            self._tilt_level = target
+            self.async_write_ha_state()
+
+    # ---------------------------------------------------------------- group
+    def begin_motion_for_group(self, target_tilt: int | None, target_position: int | None) -> None:
+        """Called by the group service before its multi-channel burst.
+
+        target_tilt / target_position are the values the settle should land at
+        (None disables scheduling — e.g. for STOP, where both stay unknown).
+        """
+        self._begin_motion()
+        if target_tilt is not None and target_position is not None:
+            self._schedule_settle(target_tilt, target_position)
         self.async_write_ha_state()
 
-    async def _move_to_tilt_level(self, target: int) -> None:
-        # Auto-anchor on the very first tilt after a fresh install.
-        if self._last_direction is None:
-            await self._send("DOWN")
-            self._last_direction = "DOWN"
-            self._tilt_level = TILT_LEVEL_DOWN_ANCHOR
-            self._position = 0
-            if target == TILT_LEVEL_DOWN_ANCHOR:
-                return
+    def commit_tilt_target(self, target_level: int) -> None:
+        """Group tilt finished its LONG_DOWN walk; record the resulting level."""
+        self._tilt_level = target_level
+        # Position stays at 0 — the group tilt path always runs from full-down
+        # and LONG_DOWN doesn't move the blind up or down.
+        self.async_write_ha_state()
 
-        current = self._tilt_level
-        if current == target:
-            return
+    def commit_full_down(self) -> None:
+        """Group orchestrator finished waiting out a DOWN cycle; snap to anchor."""
+        self._cancel_settle()
+        self._tilt_level = TILT_LEVEL_DOWN_ANCHOR
+        self._position = 0
+        self.async_write_ha_state()
 
-        # Tilt direction depends on which fast movement was last.
-        natural = "LONG_UP" if self._last_direction == "DOWN" else "LONG_DOWN"
-        natural_goes_up = natural == "LONG_UP"
-        going_up = target > current
+    async def at_full_down_with_settled_state(self) -> bool:
+        """True iff currently at level 7 / pos 0 with no in-flight settle.
 
-        if going_up != natural_goes_up:
-            # Direction conflict — anchor-reset to the closer extreme.
-            if target <= TILT_LEVELS // 2 + 1:   # bottom half incl. middle -> DOWN
-                await self._send("DOWN")
-                self._last_direction = "DOWN"
-                self._tilt_level = TILT_LEVEL_DOWN_ANCHOR
-                self._position = 0
-                current = TILT_LEVEL_DOWN_ANCHOR
-                natural = "LONG_UP"
-            else:
-                await self._send("UP")
-                self._last_direction = "UP"
-                self._tilt_level = TILT_LEVEL_UP_ANCHOR
-                self._position = 100
-                current = TILT_LEVEL_UP_ANCHOR
-                natural = "LONG_DOWN"
+        If a settle is pending whose target is full-down, awaits it and then
+        reports the result.
+        """
+        if (
+            self._tilt_level == TILT_LEVEL_DOWN_ANCHOR
+            and self._position == 0
+            and self._settle_task is None
+        ):
+            return True
+        if (
+            self._settle_task is not None
+            and self._settle_target == (TILT_LEVEL_DOWN_ANCHOR, 0)
+        ):
+            await self._await_settle()
+            return (
+                self._tilt_level == TILT_LEVEL_DOWN_ANCHOR
+                and self._position == 0
+            )
+        return False
 
-        steps = abs(target - current)
-        # +1 extra step at the extremes to clear motor desync into the limit,
-        # but only when we actually have to tilt (steps>0). Anchoring directly
-        # onto the extreme via a fast UP/DOWN doesn't need the extra.
-        if target in TILT_EXTREMES and steps > 0:
-            steps += 1
-
-        for _ in range(steps):
-            await self._send(natural)
-        self._tilt_level = target
-
+    # ------------------------------------------------------------- internal
     async def _send(self, action: str) -> None:
         """Fire a single RF burst via the integration's transmit queue."""
         pulses = build_symbol_burst_signed(self._blind.remote, [self._blind.channel], action)
         await self._runtime.transmit_queue.send(pulses)
 
-    def apply_group_update(
-        self,
-        last_direction: str | None,
-        tilt_level: int,
-        position: int | None,
-        *,
-        update_position: bool = True,
-    ) -> None:
-        """Apply state predicted by send_group after a group burst sequence.
+    def _begin_motion(self) -> None:
+        """Cancel any pending settle and mark state as in-flight."""
+        self._cancel_settle()
+        self._tilt_level = None
+        self._position = None
 
-        last_direction=None leaves the recorded direction untouched (e.g. a
-        delta-only tilt doesn't change which fast movement was last). Pass
-        update_position=False to leave the position unchanged (also used by
-        tilt — tilting doesn't move the blind up or down).
+    def _cancel_settle(self) -> None:
+        if self._settle_task is not None and not self._settle_task.done():
+            self._settle_task.cancel()
+        self._settle_task = None
+        self._settle_target = None
+
+    def _schedule_settle(self, target_tilt: int, target_position: int) -> None:
+        """Schedule the post-motion state commit `full_movement_time` seconds out."""
+        travel_time = self._runtime.travel_time_for(self._blind)
+        self._settle_target = (target_tilt, target_position)
+        target = (target_tilt, target_position)
+
+        async def _settle() -> None:
+            try:
+                await asyncio.sleep(travel_time)
+            except asyncio.CancelledError:
+                return
+            # Verify we still own this settle slot (a newer action may have
+            # cancelled us between sleep-wakeup and re-entry).
+            if self._settle_target != target:
+                return
+            self._tilt_level = target_tilt
+            self._position = target_position
+            self._settle_task = None
+            self._settle_target = None
+            self.async_write_ha_state()
+
+        self._settle_task = self.hass.async_create_task(_settle())
+
+    async def _await_settle(self) -> None:
+        task = self._settle_task
+        if task is None:
+            return
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _ensure_at_full_down(self) -> None:
+        """Block until the blind is at full-down (tilt 7, position 0).
+
+        Three cases:
+        - already there: return immediately;
+        - a pending settle is on its way to full-down: await it;
+        - otherwise: cancel any pending settle, issue a fresh DOWN, and sleep
+          for the configured travel time before recording the anchor.
         """
-        if last_direction is not None:
-            self._last_direction = last_direction
-        self._tilt_level = tilt_level
-        if update_position:
-            self._position = position
+        if await self.at_full_down_with_settled_state():
+            return
+
+        self._cancel_settle()
+        await self._send("DOWN")
+        self._tilt_level = None
+        self._position = None
+        self.async_write_ha_state()
+
+        travel_time = self._runtime.travel_time_for(self._blind)
+        await asyncio.sleep(travel_time)
+        self._tilt_level = TILT_LEVEL_DOWN_ANCHOR
+        self._position = 0
+
+    # --------------------------------------------------------------- raw
+    def invalidate_for_raw(self, invalidate_position: bool) -> None:
+        """Called by send_group_raw after sending a raw burst on this channel.
+
+        Tilt is always invalidated; position is invalidated for UP/DOWN/STOP
+        and left alone for LONG_UP / LONG_DOWN.
+        """
+        self._cancel_settle()
+        self._tilt_level = None
+        if invalidate_position:
+            self._position = None
         self.async_write_ha_state()

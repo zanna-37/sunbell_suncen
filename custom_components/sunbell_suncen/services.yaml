@@ -5,7 +5,8 @@ send_group:
     Pick cover entities (or whole remote devices) in the target picker — the
     integration groups them by remote and computes the most efficient SUNCEN
     burst sequence to reach the requested end state. Raw remote + channels are
-    also accepted for scripted callers.
+    also accepted for scripted callers. Tilt operations always re-anchor to
+    full-down first when needed; STOP invalidates the tracked tilt.
   target:
     entity:
       integration: sunbell_suncen
@@ -43,6 +44,82 @@ send_group:
           step: 1
           mode: slider
           unit_of_measurement: "%"
+    remote:
+      name: Remote ID
+      description: >-
+        Optional. Raw Sunbell remote (0..12). Required only if you don't
+        select target entities/devices.
+      required: false
+      example: "2"
+      selector:
+        select:
+          options:
+            - "0"
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+            - "5"
+            - "6"
+            - "7"
+            - "8"
+            - "9"
+            - "10"
+            - "11"
+            - "12"
+    channels:
+      name: Channels
+      description: >-
+        Optional. Channels (1..12) on the remote above. Required only if you
+        don't select target entities/devices.
+      required: false
+      example: "[1, 2, 6]"
+      selector:
+        select:
+          multiple: true
+          options:
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+            - "5"
+            - "6"
+            - "7"
+            - "8"
+            - "9"
+            - "10"
+            - "11"
+            - "12"
+
+send_group_raw:
+  name: Send raw SUNCEN burst
+  description: >-
+    Send a raw SUNCEN burst (UP / DOWN / STOP / LONG_UP / LONG_DOWN) to a
+    group of blinds without any tilt tracking. Tilt state is invalidated on
+    every targeted blind; for UP / DOWN / STOP the position is invalidated
+    too. Use this when you need to drive the motor directly outside of the
+    integration's HA-level model — subsequent HA tilt commands will
+    re-anchor with a fresh DOWN cycle.
+  target:
+    entity:
+      integration: sunbell_suncen
+      domain: cover
+    device:
+      integration: sunbell_suncen
+  fields:
+    action:
+      name: Action
+      description: Raw SUNCEN burst name.
+      required: true
+      default: UP
+      selector:
+        select:
+          options:
+            - "UP"
+            - "DOWN"
+            - "STOP"
+            - "LONG_UP"
+            - "LONG_DOWN"
     remote:
       name: Remote ID
       description: >-

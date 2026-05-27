@@ -5,7 +5,8 @@
         "title": "Select ESPHome transmit service",
         "description": "Pick the ESPHome user service that broadcasts SUNCEN RF bursts (typically named `[device]_transmit_raw`). Set up your ESPHome device in Home Assistant first if no services appear.",
         "data": {
-          "transmit_service": "Transmit service"
+          "transmit_service": "Transmit service",
+          "full_movement_time": "Default full-movement time (seconds)"
         }
       },
       "remote": {
@@ -33,7 +34,9 @@
       "init": {
         "menu_options": {
           "add_remote": "Add a remote",
-          "remove_remote": "Remove a remote"
+          "remove_remote": "Remove a remote",
+          "set_default_travel_time": "Set default travel time",
+          "configure_blind": "Configure a blind"
         }
       },
       "add_remote": {
@@ -48,18 +51,43 @@
         "data": {
           "remote_id": "Remote to remove"
         }
+      },
+      "set_default_travel_time": {
+        "title": "Default full-movement time",
+        "description": "Seconds the motor needs to fully open or close. Blinds without an override use this value.",
+        "data": {
+          "full_movement_time": "Default full-movement time (seconds)"
+        }
+      },
+      "configure_blind": {
+        "title": "Configure a blind",
+        "description": "Pick the blind whose settings you want to override.",
+        "data": {
+          "blind": "Blind"
+        }
+      },
+      "set_blind_travel_time": {
+        "title": "Travel time for r{remote} ch{channel}",
+        "description": "Override the full-movement time for this blind. Default is {default}s.",
+        "data": {
+          "full_movement_time": "Full-movement time (seconds)",
+          "use_default": "Use the entry default"
+        }
       }
     },
     "error": {
       "invalid_channels": "Invalid channel list.",
-      "duplicate_remote": "That remote ID is already configured.",
-      "no_remote_to_remove": "No remotes configured yet."
+      "duplicate_remote": "That remote ID is already configured."
+    },
+    "abort": {
+      "no_remote_to_remove": "No remotes configured yet.",
+      "no_blinds": "No blinds configured yet."
     }
   },
   "services": {
     "send_group": {
       "name": "Send group command",
-      "description": "Drive a group of Sunbell blinds with a single Home-Assistant cover command. Pick cover entities (or remote devices) in the target picker — the integration groups them by remote and computes the most efficient SUNCEN burst sequence to reach the requested end state. Raw remote + channels are also accepted.",
+      "description": "Drive a group of Sunbell blinds with a single Home-Assistant cover command. Pick cover entities (or remote devices) in the target picker. Tilt operations always re-anchor to full-down first when needed; STOP invalidates the tracked tilt.",
       "fields": {
         "action": {
           "name": "Action",
@@ -68,6 +96,24 @@
         "tilt_position": {
           "name": "Tilt position",
           "description": "Target tilt 0..100 (%). Required when action is 'Set tilt position'; ignored otherwise."
+        },
+        "remote": {
+          "name": "Remote ID",
+          "description": "Optional. Raw Sunbell remote (0..12). Required only when not targeting entities/devices."
+        },
+        "channels": {
+          "name": "Channels",
+          "description": "Optional. Channels (1..12) on the remote above. Required only when not targeting entities/devices."
+        }
+      }
+    },
+    "send_group_raw": {
+      "name": "Send raw SUNCEN burst",
+      "description": "Send a raw SUNCEN burst (UP / DOWN / STOP / LONG_UP / LONG_DOWN) without tilt tracking. Tilt is invalidated on every targeted blind; UP / DOWN / STOP also invalidate position.",
+      "fields": {
+        "action": {
+          "name": "Action",
+          "description": "Raw SUNCEN burst name (UP, DOWN, STOP, LONG_UP, LONG_DOWN)."
         },
         "remote": {
           "name": "Remote ID",

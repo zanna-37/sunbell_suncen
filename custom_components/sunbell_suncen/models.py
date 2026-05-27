@@ -9,10 +9,12 @@ from homeassistant.core import HomeAssistant
 from .const import (
     CONF_BLINDS,
     CONF_CHANNEL,
+    CONF_FULL_MOVEMENT_TIME,
     CONF_NAME,
     CONF_REMOTE_ID,
     CONF_REMOTES,
     CONF_TRANSMIT_SERVICE,
+    DEFAULT_FULL_MOVEMENT_TIME,
 )
 from .transmit_queue import TransmitQueue
 
@@ -23,6 +25,7 @@ class BlindConfig:
     remote: str
     channel: int
     name: str
+    full_movement_time: int | None = None    # None -> fall back to entry default
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +41,12 @@ class SunbellRuntimeData:
     transmit_service_name: str   # "<device>_transmit_raw" under the esphome domain
     remotes: tuple[RemoteConfig, ...]
     transmit_queue: TransmitQueue
+    default_full_movement_time: int
+
+    def travel_time_for(self, blind: BlindConfig) -> int:
+        """Effective full-movement time for `blind` — its override or the entry default."""
+        return blind.full_movement_time if blind.full_movement_time is not None \
+            else self.default_full_movement_time
 
 
 type SunbellConfigEntry = ConfigEntry[SunbellRuntimeData]
@@ -57,6 +66,9 @@ def build_runtime_data(
                     remote=rc[CONF_REMOTE_ID],
                     channel=int(b[CONF_CHANNEL]),
                     name=str(b[CONF_NAME]),
+                    full_movement_time=_coerce_optional_int(
+                        b.get(CONF_FULL_MOVEMENT_TIME)
+                    ),
                 )
                 for b in rc[CONF_BLINDS]
             ),
@@ -64,8 +76,18 @@ def build_runtime_data(
         for rc in remotes_raw
     )
     transmit_service_name = str(merged[CONF_TRANSMIT_SERVICE])
+    default_full_movement_time = int(
+        merged.get(CONF_FULL_MOVEMENT_TIME, DEFAULT_FULL_MOVEMENT_TIME)
+    )
     return SunbellRuntimeData(
         transmit_service_name=transmit_service_name,
         remotes=remotes,
         transmit_queue=TransmitQueue(hass, transmit_service_name),
+        default_full_movement_time=default_full_movement_time,
     )
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)

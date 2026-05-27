@@ -5,7 +5,8 @@
         "title": "Seleziona il servizio di trasmissione ESPHome",
         "description": "Seleziona il servizio utente ESPHome che trasmette le sequenze RF SUNCEN (di solito chiamato `[device]_transmit_raw`). Aggiungi prima il tuo dispositivo ESPHome a Home Assistant se non vedi nessun servizio.",
         "data": {
-          "transmit_service": "Servizio di trasmissione"
+          "transmit_service": "Servizio di trasmissione",
+          "full_movement_time": "Tempo di movimento completo predefinito (secondi)"
         }
       },
       "remote": {
@@ -33,7 +34,9 @@
       "init": {
         "menu_options": {
           "add_remote": "Aggiungi un radiocomando",
-          "remove_remote": "Rimuovi un radiocomando"
+          "remove_remote": "Rimuovi un radiocomando",
+          "set_default_travel_time": "Imposta tempo di movimento predefinito",
+          "configure_blind": "Configura una tapparella"
         }
       },
       "add_remote": {
@@ -48,18 +51,43 @@
         "data": {
           "remote_id": "Radiocomando da rimuovere"
         }
+      },
+      "set_default_travel_time": {
+        "title": "Tempo di movimento completo predefinito",
+        "description": "Secondi che il motore impiega per aprire o chiudere completamente. Le tapparelle senza override usano questo valore.",
+        "data": {
+          "full_movement_time": "Tempo di movimento completo predefinito (secondi)"
+        }
+      },
+      "configure_blind": {
+        "title": "Configura una tapparella",
+        "description": "Seleziona la tapparella di cui vuoi modificare le impostazioni.",
+        "data": {
+          "blind": "Tapparella"
+        }
+      },
+      "set_blind_travel_time": {
+        "title": "Tempo di movimento per r{remote} ch{channel}",
+        "description": "Sovrascrivi il tempo di movimento completo per questa tapparella. Il valore predefinito è {default}s.",
+        "data": {
+          "full_movement_time": "Tempo di movimento completo (secondi)",
+          "use_default": "Usa il valore predefinito"
+        }
       }
     },
     "error": {
       "invalid_channels": "Elenco dei canali non valido.",
-      "duplicate_remote": "Quell'ID radiocomando è già configurato.",
-      "no_remote_to_remove": "Nessun radiocomando configurato."
+      "duplicate_remote": "Quell'ID radiocomando è già configurato."
+    },
+    "abort": {
+      "no_remote_to_remove": "Nessun radiocomando configurato.",
+      "no_blinds": "Nessuna tapparella configurata."
     }
   },
   "services": {
     "send_group": {
       "name": "Invia comando di gruppo",
-      "description": "Comanda un gruppo di tapparelle Sunbell con un singolo comando cover di Home Assistant. Seleziona le entità cover (o i dispositivi radiocomando) nel selettore di destinazione: l'integrazione le raggruppa per radiocomando e calcola la sequenza di sequenze RF SUNCEN più efficiente per raggiungere lo stato finale richiesto. In alternativa, fornisci ID radiocomando + elenco canali manualmente.",
+      "description": "Comanda un gruppo di tapparelle Sunbell con un singolo comando cover di Home Assistant. Seleziona le entità cover (o i dispositivi radiocomando) nel selettore di destinazione. Le operazioni di inclinazione ri-ancorano sempre a tutta-giù prima quando necessario; STOP invalida l'inclinazione tracciata.",
       "fields": {
         "action": {
           "name": "Azione",
@@ -68,6 +96,24 @@
         "tilt_position": {
           "name": "Posizione inclinazione",
           "description": "Inclinazione target 0..100 (%). Richiesto quando l'azione è 'Imposta inclinazione'; ignorato altrimenti."
+        },
+        "remote": {
+          "name": "ID radiocomando",
+          "description": "Opzionale. Radiocomando Sunbell (0..12). Richiesto solo se non selezioni entità/dispositivi nella destinazione."
+        },
+        "channels": {
+          "name": "Canali",
+          "description": "Opzionale. Canali (1..12) sul radiocomando indicato sopra. Richiesto solo se non selezioni entità/dispositivi nella destinazione."
+        }
+      }
+    },
+    "send_group_raw": {
+      "name": "Invia sequenza RF SUNCEN raw",
+      "description": "Invia una sequenza RF SUNCEN raw (UP / DOWN / STOP / LONG_UP / LONG_DOWN) senza tracciare l'inclinazione. L'inclinazione viene invalidata su ogni tapparella selezionata; UP / DOWN / STOP invalidano anche la posizione.",
+      "fields": {
+        "action": {
+          "name": "Azione",
+          "description": "Nome della sequenza RF SUNCEN raw (UP, DOWN, STOP, LONG_UP, LONG_DOWN)."
         },
         "remote": {
           "name": "ID radiocomando",
