@@ -67,6 +67,11 @@ TILT_LEVELS: Final = 7
 TILT_LEVEL_DOWN_ANCHOR: Final = 7   # post-fast-DOWN resting tilt (reversal inverts slats)
 TILT_LEVEL_UP_ANCHOR: Final = 1     # post-fast-UP resting tilt   (reversal inverts slats)
 
+# The 7 quantized tilt positions (in HA percent). Every set_tilt_position
+# input is snapped to the nearest tick before the LONG_DOWN walk is planned,
+# and current_cover_tilt_position always reports one of these values.
+TILT_POSITION_TICKS: Final = (0, 17, 33, 50, 67, 83, 100)
+
 # --- restored state attributes ---------------------------------------------
 ATTR_TILT_LEVEL: Final = "tilt_level"           # 1..7 or None (unknown)
 ATTR_POSITION_INTERNAL: Final = "position_internal"  # 0 | 100 | None

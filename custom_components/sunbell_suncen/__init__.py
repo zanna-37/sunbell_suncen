@@ -369,14 +369,15 @@ async def _execute_tilt(
     """Drive each remote's group to target_level: ensure full-down, then LONG_DOWN × delta.
 
     For every remote in the resolved set:
-    1. If any blind isn't already at full-down, fire a multi-channel DOWN
-       burst and wait the longest `full_movement_time` among the non-anchored
-       blinds.
-    2. Walk `7 - target_level` multi-channel LONG_DOWN bursts. Each blind's
-       tilt_level is then set to target_level (position stays 0).
+    1. Drop blinds already settled at target_level (idempotent).
+    2. If any remaining blind isn't already at full-down, fire a
+       multi-channel DOWN burst and wait the longest `full_movement_time`
+       among the non-anchored blinds.
+    3. Walk `7 - target_level` multi-channel LONG_DOWN bursts.
 
-    Channels with no live entity in the group are sent the bursts but
-    don't update state (no entity to update).
+    Per-remote pipelines run concurrently via asyncio.gather so their
+    full_movement_time sleeps overlap. The shared transmit queue still
+    serialises the actual RF bursts; only the post-burst waits are parallel.
     """
     per_remote: dict[str, list[SunbellBlind]] = defaultdict(list)
     for remote, _channel, blind in resolved:
@@ -389,35 +390,57 @@ async def _execute_tilt(
             "Sunbell cover entity was found in the target."
         )
 
-    for remote, blinds in per_remote.items():
+    # Validate runtime exists for every remote up front so a missing remote
+    # doesn't silently leave half the group untouched.
+    runtimes: dict[str, SunbellRuntimeData] = {}
+    for remote in per_remote:
         runtime = _runtime_for_remote(hass, remote)
         if runtime is None:
             raise vol.Invalid(
                 f"Remote {remote!r} is not configured in any Sunbell SUNCEN entry"
             )
-        channels = sorted(b.channel for b in blinds)
+        runtimes[remote] = runtime
 
-        not_anchored: list[SunbellBlind] = []
-        for b in blinds:
-            if not await b.at_full_down_with_settled_state():
-                not_anchored.append(b)
+    await asyncio.gather(*(
+        _drive_remote_to_tilt(runtimes[remote], remote, blinds, target_level)
+        for remote, blinds in per_remote.items()
+    ))
 
-        if not_anchored:
-            pulses = build_symbol_burst_signed(remote, channels, "DOWN")
-            await runtime.transmit_queue.send(pulses)
-            for b in blinds:
-                b.begin_motion_for_group(None, None)
-            wait_time = max(b.travel_time for b in not_anchored)
-            await asyncio.sleep(wait_time)
-            for b in blinds:
-                b.commit_full_down()
 
-        delta = TILT_LEVEL_DOWN_ANCHOR - target_level
-        for _ in range(delta):
-            pulses = build_symbol_burst_signed(remote, channels, "LONG_DOWN")
-            await runtime.transmit_queue.send(pulses)
-        for b in blinds:
-            b.commit_tilt_target(target_level)
+async def _drive_remote_to_tilt(
+    runtime: SunbellRuntimeData,
+    remote: str,
+    blinds: list[SunbellBlind],
+    target_level: int,
+) -> None:
+    """Anchor + LONG_DOWN walk for one remote's blinds. Idempotent on at-target."""
+    pending = [b for b in blinds if not b.is_at_tilt_target(target_level)]
+    if not pending:
+        return
+
+    channels = sorted(b.channel for b in pending)
+
+    not_anchored: list[SunbellBlind] = []
+    for b in pending:
+        if not await b.at_full_down_with_settled_state():
+            not_anchored.append(b)
+
+    if not_anchored:
+        pulses = build_symbol_burst_signed(remote, channels, "DOWN")
+        await runtime.transmit_queue.send(pulses)
+        for b in pending:
+            b.begin_motion_for_group(None, None)
+        wait_time = max(b.travel_time for b in not_anchored)
+        await asyncio.sleep(wait_time)
+        for b in pending:
+            b.commit_full_down()
+
+    delta = TILT_LEVEL_DOWN_ANCHOR - target_level
+    for _ in range(delta):
+        pulses = build_symbol_burst_signed(remote, channels, "LONG_DOWN")
+        await runtime.transmit_queue.send(pulses)
+    for b in pending:
+        b.commit_tilt_target(target_level)
 
 
 def _partition(

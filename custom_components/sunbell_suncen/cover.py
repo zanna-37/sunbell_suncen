@@ -45,7 +45,10 @@ from .const import (
     TILT_LEVELS,
     TILT_LEVEL_DOWN_ANCHOR,
     TILT_LEVEL_UP_ANCHOR,
+    TILT_POSITION_TICKS,
 )
+
+ATTR_TILT_POSITION_TICKS = "tilt_position_ticks"
 from .models import BlindConfig, SunbellConfigEntry, SunbellRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
@@ -66,14 +69,19 @@ async def async_setup_entry(
 
 
 def tilt_position_to_level(pct: int) -> int:
-    """0..100 -> 1..7 by linear quantization."""
+    """Snap a 0..100 percent input to the nearest 1..7 tilt level via TILT_POSITION_TICKS."""
     pct = max(0, min(100, int(pct)))
-    return round(pct / 100 * (TILT_LEVELS - 1)) + 1
+    # Pick the tick index whose value is closest to `pct`; ties go down.
+    best_idx = min(
+        range(TILT_LEVELS),
+        key=lambda i: (abs(TILT_POSITION_TICKS[i] - pct), i),
+    )
+    return best_idx + 1
 
 
 def tilt_level_to_position(level: int) -> int:
-    """1..7 -> 0..100, inverse of tilt_position_to_level."""
-    return round((level - 1) / (TILT_LEVELS - 1) * 100)
+    """1..7 -> one of TILT_POSITION_TICKS."""
+    return TILT_POSITION_TICKS[level - 1]
 
 
 class SunbellBlind(RestoreEntity, CoverEntity):
@@ -151,6 +159,7 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         return {
             ATTR_TILT_LEVEL: self._tilt_level,
             ATTR_POSITION_INTERNAL: self._position,
+            ATTR_TILT_POSITION_TICKS: list(TILT_POSITION_TICKS),
         }
 
     # ------------------------------------------------------------------ HA
@@ -176,6 +185,8 @@ class SunbellBlind(RestoreEntity, CoverEntity):
     async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
         target = tilt_position_to_level(kwargs[ATTR_TILT_POSITION])
         async with self._tilt_lock:
+            if self.is_at_tilt_target(target):
+                return
             await self._ensure_at_full_down()
             delta = TILT_LEVEL_DOWN_ANCHOR - target
             for _ in range(delta):
@@ -231,6 +242,14 @@ class SunbellBlind(RestoreEntity, CoverEntity):
                 and self._position == 0
             )
         return False
+
+    def is_at_tilt_target(self, target: int) -> bool:
+        """True iff the blind is settled at full-down with tilt_level == target."""
+        return (
+            self._tilt_level == target
+            and self._position == 0
+            and self._settle_task is None
+        )
 
     # ------------------------------------------------------------- internal
     async def _send(self, action: str) -> None:
