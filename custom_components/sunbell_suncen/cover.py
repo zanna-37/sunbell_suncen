@@ -47,8 +47,6 @@ from .models import BlindConfig, SunbellConfigEntry, SunbellRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
-ESPHOME_DOMAIN = "esphome"
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -218,14 +216,9 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         self._tilt_level = target
 
     async def _send(self, action: str) -> None:
-        """Fire a single RF burst via the configured ESPHome transmit service."""
+        """Fire a single RF burst via the integration's transmit queue."""
         pulses = build_symbol_burst_signed(self._blind.remote, [self._blind.channel], action)
-        await self.hass.services.async_call(
-            ESPHOME_DOMAIN,
-            self._runtime.transmit_service_name,
-            {"code": pulses},
-            blocking=False,
-        )
+        await self._runtime.transmit_queue.send(pulses)
 
     def apply_group_update(
         self,

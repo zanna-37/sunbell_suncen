@@ -47,3 +47,9 @@ TILT_EXTREMES: Final = frozenset({1, TILT_LEVELS})
 ATTR_LAST_DIRECTION: Final = "last_direction"   # "UP" | "DOWN" | None
 ATTR_TILT_LEVEL: Final = "tilt_level"           # 1..7
 ATTR_POSITION_INTERNAL: Final = "position_internal"  # 0 | 100 | None
+
+# --- transmit pacing -------------------------------------------------------
+# Minimum dead-air time between consecutive bursts, in seconds. The SUNCEN
+# centralina requires this gap to commit each command; the integration paces
+# its outgoing bursts so the ESPHome on-board queue stays effectively empty.
+BURST_GAP_SECONDS: Final = 0.5

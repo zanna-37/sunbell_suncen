@@ -62,7 +62,7 @@ SEND_GROUP_SCHEMA = cv.make_entity_service_schema(
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SunbellConfigEntry) -> bool:
-    runtime = build_runtime_data(entry)
+    runtime = build_runtime_data(hass, entry)
 
     # Pre-flight: the ESPHome user service we'll call must exist. If the
     # ESPHome integration is still setting up its devices, services may not
@@ -77,6 +77,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SunbellConfigEntry) -> b
             f"so."
         )
 
+    runtime.transmit_queue.start()
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _prune_orphan_devices(hass, entry, runtime)
@@ -86,7 +87,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: SunbellConfigEntry) -> b
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: SunbellConfigEntry) -> bool:
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        await entry.runtime_data.transmit_queue.stop()
+    return unloaded
 
 
 async def async_remove_config_entry_device(
@@ -318,12 +322,7 @@ async def _execute_fast(
         channels = sorted(channel_set)
         for burst_action in plan:
             pulses = build_symbol_burst_signed(remote, channels, burst_action)
-            await hass.services.async_call(
-                ESPHOME_DOMAIN,
-                runtime.transmit_service_name,
-                {"code": pulses},
-                blocking=False,
-            )
+            await runtime.transmit_queue.send(pulses)
         if end_state is not None:
             last_direction, tilt_level, position = end_state
             for blind in entities_by_remote[remote]:
@@ -366,12 +365,7 @@ async def _execute_tilt(
         )
         for burst_action, channels in plan:
             pulses = build_symbol_burst_signed(remote, channels, burst_action)
-            await hass.services.async_call(
-                ESPHOME_DOMAIN,
-                runtime.transmit_service_name,
-                {"code": pulses},
-                blocking=False,
-            )
+            await runtime.transmit_queue.send(pulses)
         for _, start_level, blind in items:
             if start_level != target_level:
                 blind.apply_group_update(
