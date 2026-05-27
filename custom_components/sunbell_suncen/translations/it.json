@@ -59,19 +59,23 @@
   "services": {
     "send_group": {
       "name": "Invia comando di gruppo",
-      "description": "Invia una sequenza RF SUNCEN indirizzata a più canali sullo stesso radiocomando in un'unica trasmissione.",
+      "description": "Comanda un gruppo di tapparelle Sunbell con un singolo comando cover di Home Assistant. Seleziona le entità cover (o i dispositivi radiocomando) nel selettore di destinazione: l'integrazione le raggruppa per radiocomando e calcola la sequenza di sequenze RF SUNCEN più efficiente per raggiungere lo stato finale richiesto. In alternativa, fornisci ID radiocomando + elenco canali manualmente.",
       "fields": {
+        "action": {
+          "name": "Azione",
+          "description": "Comando cover di Home Assistant (Apri, Chiudi, Ferma, o Imposta inclinazione)."
+        },
+        "tilt_position": {
+          "name": "Posizione inclinazione",
+          "description": "Inclinazione target 0..100 (%). Richiesto quando l'azione è 'Imposta inclinazione'; ignorato altrimenti."
+        },
         "remote": {
           "name": "ID radiocomando",
-          "description": "Il radiocomando Sunbell (0..12)."
+          "description": "Opzionale. Radiocomando Sunbell (0..12). Richiesto solo se non selezioni entità/dispositivi nella destinazione."
         },
         "channels": {
           "name": "Canali",
-          "description": "Elenco dei canali (1..12) su quel radiocomando."
-        },
-        "action": {
-          "name": "Azione",
-          "description": "UP, DOWN, STOP, LONG_UP o LONG_DOWN."
+          "description": "Opzionale. Canali (1..12) sul radiocomando indicato sopra. Richiesto solo se non selezioni entità/dispositivi nella destinazione."
         }
       }
     }

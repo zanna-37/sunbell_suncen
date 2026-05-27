@@ -21,8 +21,16 @@ SERVICE_SEND_GROUP: Final = "send_group"
 CONF_REMOTE: Final = "remote"
 CONF_CHANNELS: Final = "channels"
 CONF_ACTION: Final = "action"
+CONF_TILT_POSITION: Final = "tilt_position"
 
-ACTIONS: Final = ("UP", "DOWN", "STOP", "LONG_UP", "LONG_DOWN")
+# HA-level commands exposed by send_group. The integration translates each
+# into the most efficient SUNCEN burst plan for the targeted group.
+ACTION_OPEN: Final = "open"
+ACTION_CLOSE: Final = "close"
+ACTION_STOP: Final = "stop"
+ACTION_SET_TILT_POSITION: Final = "set_tilt_position"
+ACTIONS: Final = (ACTION_OPEN, ACTION_CLOSE, ACTION_STOP, ACTION_SET_TILT_POSITION)
+
 REMOTES: Final = tuple(str(i) for i in range(13))   # "0".."12"
 
 # --- tilt model ------------------------------------------------------------

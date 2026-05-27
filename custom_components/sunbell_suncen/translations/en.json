@@ -59,19 +59,23 @@
   "services": {
     "send_group": {
       "name": "Send group command",
-      "description": "Send a SUNCEN RF burst addressed to multiple channels on the same remote in one transmission.",
+      "description": "Drive a group of Sunbell blinds with a single Home-Assistant cover command. Pick cover entities (or remote devices) in the target picker — the integration groups them by remote and computes the most efficient SUNCEN burst sequence to reach the requested end state. Raw remote + channels are also accepted.",
       "fields": {
+        "action": {
+          "name": "Action",
+          "description": "Home-Assistant cover command (Open, Close, Stop, or Set tilt position)."
+        },
+        "tilt_position": {
+          "name": "Tilt position",
+          "description": "Target tilt 0..100 (%). Required when action is 'Set tilt position'; ignored otherwise."
+        },
         "remote": {
           "name": "Remote ID",
-          "description": "The Sunbell remote (0..12)."
+          "description": "Optional. Raw Sunbell remote (0..12). Required only when not targeting entities/devices."
         },
         "channels": {
           "name": "Channels",
-          "description": "List of channels (1..12) on that remote."
-        },
-        "action": {
-          "name": "Action",
-          "description": "UP, DOWN, STOP, LONG_UP, or LONG_DOWN."
+          "description": "Optional. Channels (1..12) on the remote above. Required only when not targeting entities/devices."
         }
       }
     }

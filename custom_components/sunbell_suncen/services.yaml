@@ -1,13 +1,54 @@
 send_group:
   name: Send group command
   description: >-
-    Send a single SUNCEN RF burst addressed to multiple channels on the same
-    remote — the centralina sees one command, not one per blind.
+    Drive a group of Sunbell blinds with a single Home-Assistant cover command.
+    Pick cover entities (or whole remote devices) in the target picker — the
+    integration groups them by remote and computes the most efficient SUNCEN
+    burst sequence to reach the requested end state. Raw remote + channels are
+    also accepted for scripted callers.
+  target:
+    entity:
+      integration: sunbell_suncen
+      domain: cover
+    device:
+      integration: sunbell_suncen
   fields:
+    action:
+      name: Action
+      description: Home-Assistant cover command to apply to the group.
+      required: true
+      default: open
+      selector:
+        select:
+          options:
+            - label: Open
+              value: open
+            - label: Close
+              value: close
+            - label: Stop
+              value: stop
+            - label: Set tilt position
+              value: set_tilt_position
+    tilt_position:
+      name: Tilt position
+      description: >-
+        Target tilt 0..100 (%). Required when action is "Set tilt position";
+        ignored otherwise.
+      required: false
+      example: 50
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          mode: slider
+          unit_of_measurement: "%"
     remote:
       name: Remote ID
-      description: The Sunbell remote (0..12).
-      required: true
+      description: >-
+        Optional. Raw Sunbell remote (0..12). Required only if you don't
+        select target entities/devices.
+      required: false
       example: "2"
       selector:
         select:
@@ -27,8 +68,10 @@ send_group:
             - "12"
     channels:
       name: Channels
-      description: List of channels (1..12) on that remote.
-      required: true
+      description: >-
+        Optional. Channels (1..12) on the remote above. Required only if you
+        don't select target entities/devices.
+      required: false
       example: "[1, 2, 6]"
       selector:
         select:
@@ -46,16 +89,3 @@ send_group:
             - "10"
             - "11"
             - "12"
-    action:
-      name: Action
-      description: UP, DOWN, STOP, LONG_UP, or LONG_DOWN.
-      required: true
-      default: DOWN
-      selector:
-        select:
-          options:
-            - UP
-            - DOWN
-            - STOP
-            - LONG_UP
-            - LONG_DOWN

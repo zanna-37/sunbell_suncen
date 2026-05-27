@@ -68,16 +68,67 @@ against the mechanical limit.
 
 ## Service: `sunbell_suncen.send_group`
 
+`send_group` accepts the same Home-Assistant cover commands you'd use on a
+single blind — `open`, `close`, `stop`, `set_tilt_position` — and applies
+them to a group in one shot. The integration translates the high-level
+request into the most efficient SUNCEN burst sequence for the targeted
+channels, then updates each grouped entity's optimistic state to match.
+
+| Action               | Bursts (per remote)                                       |
+| -------------------- | --------------------------------------------------------- |
+| `open`               | 1 (`UP`)                                                  |
+| `close`              | 1 (`DOWN`)                                                |
+| `stop`               | 1 (`STOP`)                                                |
+| `set_tilt_position`  | 1..4: anchor at the closer extreme + step toward target  |
+
+Tilt details: `tilt_position` is mapped to a discrete level 1..7. Targets
+1 (closed-down) and 7 (closed-up) collapse to a single anchor burst.
+Targets 2..4 are anchored at `DOWN` then stepped up with `LONG_UP`; targets
+5..6 are anchored at `UP` then stepped down with `LONG_DOWN`. Anchoring
+always brings the whole group into a known state first so the group ends
+up tilt-aligned regardless of where each blind started.
+
+**By target (recommended).** Pick the cover entities — or whole remote
+devices — you want to move together; the integration groups them by remote
+and emits one burst sequence per remote.
+
 ```yaml
-service: sunbell_suncen.send_group
+action: sunbell_suncen.send_group
+target:
+  entity_id:
+    - cover.sunbell_suncen_remote_2_ch1
+    - cover.sunbell_suncen_remote_2_ch2
+    - cover.sunbell_suncen_remote_2_ch6
+data:
+  action: set_tilt_position
+  tilt_position: 50
+```
+
+```yaml
+action: sunbell_suncen.send_group
+target:
+  device_id: <sunbell-remote-2-device>
+data:
+  action: close
+```
+
+**By raw IDs.** Useful in shell scripts or when scripting against a remote
+you haven't exposed as entities.
+
+```yaml
+action: sunbell_suncen.send_group
 data:
   remote: "2"
   channels: [1, 2, 6]
-  action: DOWN     # UP | DOWN | STOP | LONG_UP | LONG_DOWN
+  action: open
 ```
 
-The integration synthesizes a single RF burst that addresses all listed
-channels at once.
+## Removing a remote
+
+Delete a configured remote either from **Settings → Devices & Services →
+Sunbell SUNCEN → Configure → Remove a remote**, or directly from the
+device card's Delete button. Both paths drop the remote from the entry's
+options and clean up the device + its cover entities from the registries.
 
 ## License
 

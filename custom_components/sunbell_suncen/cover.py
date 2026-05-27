@@ -64,14 +64,14 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-def _tilt_position_to_level(pct: int) -> int:
+def tilt_position_to_level(pct: int) -> int:
     """0..100 -> 1..7 by linear quantization."""
     pct = max(0, min(100, int(pct)))
     return round(pct / 100 * (TILT_LEVELS - 1)) + 1
 
 
-def _tilt_level_to_position(level: int) -> int:
-    """1..7 -> 0..100, inverse of _tilt_position_to_level."""
+def tilt_level_to_position(level: int) -> int:
+    """1..7 -> 0..100, inverse of tilt_position_to_level."""
     return round((level - 1) / (TILT_LEVELS - 1) * 100)
 
 
@@ -113,6 +113,14 @@ class SunbellBlind(RestoreEntity, CoverEntity):
             self._position = last.attributes.get(ATTR_POSITION_INTERNAL)
 
     @property
+    def remote_id(self) -> str:
+        return self._blind.remote
+
+    @property
+    def channel(self) -> int:
+        return self._blind.channel
+
+    @property
     def is_closed(self) -> bool | None:
         return None if self._position is None else self._position == 0
 
@@ -122,7 +130,7 @@ class SunbellBlind(RestoreEntity, CoverEntity):
 
     @property
     def current_cover_tilt_position(self) -> int:
-        return _tilt_level_to_position(self._tilt_level)
+        return tilt_level_to_position(self._tilt_level)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -153,7 +161,7 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         self.async_write_ha_state()
 
     async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
-        target = _tilt_position_to_level(kwargs[ATTR_TILT_POSITION])
+        target = tilt_position_to_level(kwargs[ATTR_TILT_POSITION])
         async with self._tilt_lock:
             await self._move_to_tilt_level(target)
         self.async_write_ha_state()
@@ -214,3 +222,20 @@ class SunbellBlind(RestoreEntity, CoverEntity):
             {"code": pulses},
             blocking=False,
         )
+
+    def apply_group_update(
+        self,
+        last_direction: str | None,
+        tilt_level: int,
+        position: int | None,
+    ) -> None:
+        """Apply state predicted by send_group after a group burst sequence.
+
+        The bursts were already emitted at the remote level; this just keeps
+        each entity's optimistic state consistent with the physical motors.
+        """
+        if last_direction is not None:
+            self._last_direction = last_direction
+        self._tilt_level = tilt_level
+        self._position = position
+        self.async_write_ha_state()
