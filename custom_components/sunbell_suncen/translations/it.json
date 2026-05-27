@@ -1,0 +1,79 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Seleziona il servizio di trasmissione ESPHome",
+        "description": "Seleziona il servizio utente ESPHome che trasmette le sequenze RF SUNCEN (di solito chiamato `[device]_transmit_raw`). Aggiungi prima il tuo dispositivo ESPHome a Home Assistant se non vedi nessun servizio.",
+        "data": {
+          "transmit_service": "Servizio di trasmissione"
+        }
+      },
+      "remote": {
+        "title": "Aggiungi un radiocomando Sunbell",
+        "description": "Ogni ID radiocomando (0..12) identifica una configurazione di LED distinta abbinata alla centralina (0 = tutti i LED spenti, N = solo il LED N acceso). Elenca i canali (1..12) installati su quel radiocomando.",
+        "data": {
+          "remote_id": "ID radiocomando",
+          "channels": "Canali (es. 1,2,6)",
+          "add_another": "Aggiungi un altro radiocomando dopo questo"
+        }
+      }
+    },
+    "error": {
+      "no_transmit_services": "Nessun servizio utente ESPHome con suffisso `_transmit_raw` trovato. Aggiungi prima il dispositivo ESPHome a Home Assistant.",
+      "invalid_channels": "Elenco dei canali non valido. Usa numeri interi separati da virgole tra 1 e 12.",
+      "duplicate_remote": "Quell'ID radiocomando è già configurato.",
+      "no_channels": "È richiesto almeno un canale."
+    },
+    "abort": {
+      "already_configured": "Questa installazione è già configurata."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "add_remote": "Aggiungi un radiocomando",
+          "remove_remote": "Rimuovi un radiocomando"
+        }
+      },
+      "add_remote": {
+        "title": "Aggiungi un radiocomando Sunbell",
+        "data": {
+          "remote_id": "ID radiocomando",
+          "channels": "Canali (es. 1,2,6)"
+        }
+      },
+      "remove_remote": {
+        "title": "Rimuovi un radiocomando",
+        "data": {
+          "remote_id": "Radiocomando da rimuovere"
+        }
+      }
+    },
+    "error": {
+      "invalid_channels": "Elenco dei canali non valido.",
+      "duplicate_remote": "Quell'ID radiocomando è già configurato.",
+      "no_remote_to_remove": "Nessun radiocomando configurato."
+    }
+  },
+  "services": {
+    "send_group": {
+      "name": "Invia comando di gruppo",
+      "description": "Invia una sequenza RF SUNCEN indirizzata a più canali sullo stesso radiocomando in un'unica trasmissione.",
+      "fields": {
+        "remote": {
+          "name": "ID radiocomando",
+          "description": "Il radiocomando Sunbell (0..12)."
+        },
+        "channels": {
+          "name": "Canali",
+          "description": "Elenco dei canali (1..12) su quel radiocomando."
+        },
+        "action": {
+          "name": "Azione",
+          "description": "UP, DOWN, STOP, LONG_UP o LONG_DOWN."
+        }
+      }
+    }
+  }
+}

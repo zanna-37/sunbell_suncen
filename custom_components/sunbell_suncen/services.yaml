@@ -1,0 +1,61 @@
+send_group:
+  name: Send group command
+  description: >-
+    Send a single SUNCEN RF burst addressed to multiple channels on the same
+    remote — the centralina sees one command, not one per blind.
+  fields:
+    remote:
+      name: Remote ID
+      description: The Sunbell remote (0..12).
+      required: true
+      example: "2"
+      selector:
+        select:
+          options:
+            - "0"
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+            - "5"
+            - "6"
+            - "7"
+            - "8"
+            - "9"
+            - "10"
+            - "11"
+            - "12"
+    channels:
+      name: Channels
+      description: List of channels (1..12) on that remote.
+      required: true
+      example: "[1, 2, 6]"
+      selector:
+        select:
+          multiple: true
+          options:
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+            - "5"
+            - "6"
+            - "7"
+            - "8"
+            - "9"
+            - "10"
+            - "11"
+            - "12"
+    action:
+      name: Action
+      description: UP, DOWN, STOP, LONG_UP, or LONG_DOWN.
+      required: true
+      default: DOWN
+      selector:
+        select:
+          options:
+            - UP
+            - DOWN
+            - STOP
+            - LONG_UP
+            - LONG_DOWN

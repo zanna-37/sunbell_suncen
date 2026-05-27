@@ -1,0 +1,79 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Select ESPHome transmit service",
+        "description": "Pick the ESPHome user service that broadcasts SUNCEN RF bursts (typically named `[device]_transmit_raw`). Set up your ESPHome device in Home Assistant first if no services appear.",
+        "data": {
+          "transmit_service": "Transmit service"
+        }
+      },
+      "remote": {
+        "title": "Add a Sunbell remote",
+        "description": "Each remote ID (0..12) is a distinct LED-pattern identifier paired with the centralina (0 = all LEDs off, N = only LED N lit). List the channels (1..12) you've installed under that remote.",
+        "data": {
+          "remote_id": "Remote ID",
+          "channels": "Channels (e.g. 1,2,6)",
+          "add_another": "Add another remote after this one"
+        }
+      }
+    },
+    "error": {
+      "no_transmit_services": "No ESPHome user services ending in `_transmit_raw` were found. Add your ESPHome device to Home Assistant first.",
+      "invalid_channels": "Invalid channel list. Use comma-separated integers between 1 and 12.",
+      "duplicate_remote": "That remote ID is already configured.",
+      "no_channels": "At least one channel is required."
+    },
+    "abort": {
+      "already_configured": "This installation is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "menu_options": {
+          "add_remote": "Add a remote",
+          "remove_remote": "Remove a remote"
+        }
+      },
+      "add_remote": {
+        "title": "Add a Sunbell remote",
+        "data": {
+          "remote_id": "Remote ID",
+          "channels": "Channels (e.g. 1,2,6)"
+        }
+      },
+      "remove_remote": {
+        "title": "Remove a remote",
+        "data": {
+          "remote_id": "Remote to remove"
+        }
+      }
+    },
+    "error": {
+      "invalid_channels": "Invalid channel list.",
+      "duplicate_remote": "That remote ID is already configured.",
+      "no_remote_to_remove": "No remotes configured yet."
+    }
+  },
+  "services": {
+    "send_group": {
+      "name": "Send group command",
+      "description": "Send a SUNCEN RF burst addressed to multiple channels on the same remote in one transmission.",
+      "fields": {
+        "remote": {
+          "name": "Remote ID",
+          "description": "The Sunbell remote (0..12)."
+        },
+        "channels": {
+          "name": "Channels",
+          "description": "List of channels (1..12) on that remote."
+        },
+        "action": {
+          "name": "Action",
+          "description": "UP, DOWN, STOP, LONG_UP, or LONG_DOWN."
+        }
+      }
+    }
+  }
+}
