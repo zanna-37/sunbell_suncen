@@ -74,22 +74,33 @@ them to a group in one shot. The integration translates the high-level
 request into the most efficient SUNCEN burst sequence for the targeted
 channels, then updates each grouped entity's optimistic state to match.
 
-| Action               | Bursts                                                            |
-| -------------------- | ----------------------------------------------------------------- |
-| `open`               | 1 (`UP`), per remote                                              |
-| `close`              | 1 (`DOWN`), per remote                                            |
-| `stop`               | 1 (`STOP`), per remote                                            |
-| `set_tilt_position`  | per `(remote, starting tilt level)` group: \|delta\| × `LONG_UP` or `LONG_DOWN` |
+| Action               | Bursts                                                                                 |
+| -------------------- | -------------------------------------------------------------------------------------- |
+| `open`               | 1 (`UP`), per remote                                                                   |
+| `close`              | 1 (`DOWN`), per remote                                                                 |
+| `stop`               | 1 (`STOP`), per remote                                                                 |
+| `set_tilt_position`  | `max(deltas_up)` `LONG_UP` bursts + `max(deltas_down)` `LONG_DOWN` bursts, per remote |
 
-Tilt details: `tilt_position` is mapped to a discrete level 1..7. Selected
-blinds are grouped by their current tilt level — blinds sharing the same
-start receive the same multi-channel burst sequence. Each group emits
-exactly `|target − start|` `LONG_UP` (delta > 0) or `LONG_DOWN` (delta < 0)
-bursts; groups already at the target emit nothing. No anchoring — the
-integration trusts each blind's recorded tilt level. Because tilt only
-works when the centralina's `LONG_` bursts match the motor's last
-direction, do an `open` or `close` first if a blind's tilt has drifted out
-of sync.
+Tilt details: `tilt_position` is mapped to a discrete level 1..7. The
+scheduler walks the lowest start level toward the target, merging in each
+other channel as it reaches its starting level — channels at deeper start
+levels receive bursts only once the wave reaches them.
+
+Example: four blinds on remote 2 selected, target level 6 — starts 3, 4,
+7, 5 on channels 1, 5, 8, 9:
+
+| Step | Burst                  | After                          |
+| ---- | ---------------------- | ------------------------------ |
+| 1    | `LONG_UP`   → `[1]`    | ch 1 → 4                       |
+| 2    | `LONG_UP`   → `[1, 5]` | ch 1, 5 → 5                    |
+| 3    | `LONG_UP`   → `[1, 5, 9]` | ch 1, 5, 9 → 6              |
+| 4    | `LONG_DOWN` → `[8]`    | ch 8 → 6                       |
+
+Four bursts total. Channels at the target already emit nothing. No
+anchoring — the integration trusts each blind's recorded tilt level.
+Because the centralina only tilts when `LONG_` bursts match the motor's
+last fast direction, do an `open` or `close` first if a blind's tilt has
+drifted out of sync.
 
 `set_tilt_position` requires entity or device targets (so the per-blind
 starting level is known); raw `remote` + `channels` is rejected for tilt.

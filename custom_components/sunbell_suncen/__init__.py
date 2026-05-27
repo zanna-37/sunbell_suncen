@@ -153,19 +153,37 @@ def _plan_fast(action: str) -> list[str]:
     raise ValueError(f"_plan_fast called with non-fast action {action!r}")
 
 
-def _plan_tilt(start_level: int, target_level: int) -> list[str]:
-    """Delta-only tilt plan: |target - start| × LONG_UP or LONG_DOWN, no anchor.
+def _plan_tilt(
+    channels_with_starts: list[tuple[int, int]],
+    target_level: int,
+) -> list[tuple[str, list[int]]]:
+    """Interleaved per-remote tilt schedule: list of (action, channels) bursts.
 
-    Blinds with the same start_level reach target_level with the same burst
-    count and direction, so the caller groups them and emits one multi-channel
-    burst per step.
+    Channels with the same target level merge as they reach shared
+    intermediate levels, so each burst covers every channel still moving in
+    that direction whose original start is at-or-below (UP) or at-or-above
+    (DOWN) the current frontier.
+
+    Total bursts emitted = max(delta_up) + max(delta_down), independent of
+    how many channels are in the group.
     """
-    delta = target_level - start_level
-    if delta > 0:
-        return ["LONG_UP"] * delta
-    if delta < 0:
-        return ["LONG_DOWN"] * (-delta)
-    return []
+    bursts: list[tuple[str, list[int]]] = []
+
+    up = [(ch, start) for ch, start in channels_with_starts if start < target_level]
+    if up:
+        min_start = min(start for _, start in up)
+        for level in range(min_start, target_level):
+            participants = sorted(ch for ch, start in up if start <= level)
+            bursts.append(("LONG_UP", participants))
+
+    down = [(ch, start) for ch, start in channels_with_starts if start > target_level]
+    if down:
+        max_start = max(start for _, start in down)
+        for level in range(max_start, target_level, -1):
+            participants = sorted(ch for ch, start in down if start >= level)
+            bursts.append(("LONG_DOWN", participants))
+
+    return bursts
 
 
 def _end_state_fast(action: str) -> tuple[str, int, int] | None:
@@ -317,37 +335,36 @@ async def _execute_tilt(
     resolved: list[tuple[str, int, "SunbellBlind | None"]],
     target_level: int,
 ) -> None:
-    """Group channels by (remote, current_tilt_level) and send |delta| LONG_ bursts.
+    """Drive each remote's group to target_level with interleaved LONG_ bursts.
 
-    No anchoring: each group emits exactly |target - start| bursts in the
-    direction of the delta. Blinds with delta == 0 send nothing.
+    No anchoring: each channel advances exactly |target - start| levels in the
+    direction of its delta. Channels with the same target merge into a single
+    multi-channel burst as soon as they reach a shared intermediate level.
     """
-    # (remote, start_level) -> (channels: set[int], entities: list[SunbellBlind])
-    groups: dict[tuple[str, int], tuple[set[int], list[SunbellBlind]]] = {}
+    # remote -> list of (channel, start_level, blind)
+    per_remote: dict[str, list[tuple[int, int, SunbellBlind]]] = defaultdict(list)
     for remote, channel, blind in resolved:
         if blind is None:
             continue
-        key = (remote, blind.tilt_level)
-        ch_set, ent_list = groups.setdefault(key, (set(), []))
-        ch_set.add(channel)
-        if blind not in ent_list:
-            ent_list.append(blind)
+        per_remote[remote].append((channel, blind.tilt_level, blind))
 
-    if not groups:
+    if not per_remote:
         raise vol.Invalid(
             "set_tilt_position needs target entities (or devices) — no live "
             "Sunbell cover entity was found in the target."
         )
 
-    for (remote, start_level), (ch_set, ent_list) in groups.items():
+    for remote, items in per_remote.items():
         runtime = _runtime_for_remote(hass, remote)
         if runtime is None:
             raise vol.Invalid(
                 f"Remote {remote!r} is not configured in any Sunbell SUNCEN entry"
             )
-        plan = _plan_tilt(start_level, target_level)
-        channels = sorted(ch_set)
-        for burst_action in plan:
+        plan = _plan_tilt(
+            [(channel, start) for channel, start, _ in items],
+            target_level,
+        )
+        for burst_action, channels in plan:
             pulses = build_symbol_burst_signed(remote, channels, burst_action)
             await hass.services.async_call(
                 ESPHOME_DOMAIN,
@@ -355,13 +372,14 @@ async def _execute_tilt(
                 {"code": pulses},
                 blocking=False,
             )
-        for blind in ent_list:
-            blind.apply_group_update(
-                last_direction=None,
-                tilt_level=target_level,
-                position=None,
-                update_position=False,
-            )
+        for _, start_level, blind in items:
+            if start_level != target_level:
+                blind.apply_group_update(
+                    last_direction=None,
+                    tilt_level=target_level,
+                    position=None,
+                    update_position=False,
+                )
 
 
 def _blinds_by_entity_id(hass: HomeAssistant) -> dict[str, SunbellBlind]:
