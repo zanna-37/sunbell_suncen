@@ -359,6 +359,131 @@ async def test_shutdown_before_dispatch():
     assert fired == []
 
 
+async def test_opportunistic_merge_when_walk_catches_up(env):
+    """r0ch0 at level 4 (known), r0ch1 unknown.
+
+    Walk plan (mirrors cover.build_tilt_chain):
+      - r0ch1 unknown -> 3: [DOWN(anchor->7), LONG_DOWN(->6/5/4/3)]
+      - r0ch0      4 -> 3: [LONG_DOWN(->3)]
+
+    Submitting r0ch0 the moment r0ch1 commits to level 4 (via piggybacking on
+    that step's on_complete -- avoids an event-loop race that would let the
+    final LONG_DOWN dispatch solo before our submit lands) makes both blinds'
+    queue heads LONG_DOWN at the next tick, so the scheduler emits a single
+    merged burst on channels (0, 1) for the 4->3 step.
+    """
+    sched, transmit, builder = env
+
+    r0, r1 = ("0", 0), ("0", 1)
+    state: dict[tuple[str, int], int | None] = {r0: 4, r1: None}
+
+    def commit(key, level):
+        state[key] = level
+
+    def commit_r1_to_4_and_submit_r0():
+        commit(r1, 4)
+        sched.submit(
+            r0,
+            [step(r0, "LONG_DOWN", on_complete=lambda: commit(r0, 3))],
+        )
+
+    sched.submit(
+        r1,
+        [
+            step(r1, "DOWN", motion_time=0.05, on_complete=lambda: commit(r1, 7)),
+            step(r1, "LONG_DOWN", on_complete=lambda: commit(r1, 6)),
+            step(r1, "LONG_DOWN", on_complete=lambda: commit(r1, 5)),
+            step(r1, "LONG_DOWN", on_complete=commit_r1_to_4_and_submit_r0),
+            step(r1, "LONG_DOWN", on_complete=lambda: commit(r1, 3)),
+        ],
+    )
+
+    await asyncio.sleep(0.2)
+
+    assert state[r0] == 3
+    assert state[r1] == 3
+
+    seq = [(c, a) for _, c, a in builder.calls]
+    assert seq == [
+        ((1,), "DOWN"),
+        ((1,), "LONG_DOWN"),
+        ((1,), "LONG_DOWN"),
+        ((1,), "LONG_DOWN"),
+        ((0, 1), "LONG_DOWN"),
+    ]
+
+
+async def test_two_unknown_same_down_time_merges_full_chain(env):
+    """Both blinds unknown, both tilting to level 3, identical DOWN motion_time.
+
+    Each blind's chain is [DOWN(motion_time=T), LONG_DOWN x4] (7 -> 3).
+    Because the anchor DOWN takes the same time on both, their busy_until
+    expire together, so every step -- the anchor DOWN and all four LONG_DOWNs
+    -- coalesces into one merged burst on channels (0, 1).
+    """
+    sched, transmit, builder = env
+    motion_time = 0.05
+
+    def chain(key):
+        return [
+            step(key, "DOWN", motion_time=motion_time),
+            step(key, "LONG_DOWN"),
+            step(key, "LONG_DOWN"),
+            step(key, "LONG_DOWN"),
+            step(key, "LONG_DOWN"),
+        ]
+
+    sched.submit(("0", 0), chain(("0", 0)))
+    sched.submit(("0", 1), chain(("0", 1)))
+
+    await asyncio.sleep(0.2)
+
+    seq = [(c, a) for _, c, a in builder.calls]
+    assert seq == [
+        ((0, 1), "DOWN"),
+        ((0, 1), "LONG_DOWN"),
+        ((0, 1), "LONG_DOWN"),
+        ((0, 1), "LONG_DOWN"),
+        ((0, 1), "LONG_DOWN"),
+    ]
+
+
+async def test_two_unknown_different_down_time_only_anchor_merges(env):
+    """Both blinds unknown, both tilting to level 3, DIFFERENT DOWN motion_times.
+
+    The anchor DOWN still merges onto (0, 1) at submit time, but each blind's
+    busy_until tracks its own motion_time. The faster blind leaves settle
+    first and drains its four LONG_DOWNs solo before the slower blind is
+    ready, so the LONG_DOWN chain never re-merges.
+    """
+    sched, transmit, builder = env
+
+    def chain(key, motion_time):
+        return [
+            step(key, "DOWN", motion_time=motion_time),
+            step(key, "LONG_DOWN"),
+            step(key, "LONG_DOWN"),
+            step(key, "LONG_DOWN"),
+            step(key, "LONG_DOWN"),
+        ]
+
+    sched.submit(("0", 0), chain(("0", 0), motion_time=0.02))
+    sched.submit(("0", 1), chain(("0", 1), motion_time=0.15))
+
+    await asyncio.sleep(0.4)
+
+    seq = [(c, a) for _, c, a in builder.calls]
+
+    # Anchor DOWN is the one merged burst on both channels.
+    assert seq[0] == ((0, 1), "DOWN")
+
+    # Everything after is per-channel LONG_DOWN: ch0's four first, then ch1's four.
+    long_downs = seq[1:]
+    assert len(long_downs) == 8
+    assert all(a == "LONG_DOWN" for _, a in long_downs)
+    assert [c for c, _ in long_downs] == [(0,)] * 4 + [(1,)] * 4
+
+
 async def test_stop_is_peer_not_special(env):
     """STOP follows the same busy_until rule as everything else. A STOP step
     that's NOT preceded by submit() must wait for prior motion's busy_until."""
