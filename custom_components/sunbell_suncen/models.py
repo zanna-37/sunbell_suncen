@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from ._protocol.synth import build_symbol_burst_signed
 from .const import (
     CONF_BLINDS,
     CONF_CHANNEL,
@@ -16,6 +17,7 @@ from .const import (
     CONF_TRANSMIT_SERVICE,
     DEFAULT_FULL_MOVEMENT_TIME,
 )
+from .scheduler import BurstScheduler
 from .transmit_queue import TransmitQueue
 
 
@@ -41,6 +43,7 @@ class SunbellRuntimeData:
     transmit_service_name: str   # "<device>_transmit_raw" under the esphome domain
     remotes: tuple[RemoteConfig, ...]
     transmit_queue: TransmitQueue
+    scheduler: BurstScheduler
     default_full_movement_time: int
 
     def travel_time_for(self, blind: BlindConfig) -> int:
@@ -79,10 +82,13 @@ def build_runtime_data(
     default_full_movement_time = int(
         merged.get(CONF_FULL_MOVEMENT_TIME, DEFAULT_FULL_MOVEMENT_TIME)
     )
+    transmit_queue = TransmitQueue(hass, transmit_service_name)
+    scheduler = BurstScheduler(hass.loop, transmit_queue, build_symbol_burst_signed)
     return SunbellRuntimeData(
         transmit_service_name=transmit_service_name,
         remotes=remotes,
-        transmit_queue=TransmitQueue(hass, transmit_service_name),
+        transmit_queue=transmit_queue,
+        scheduler=scheduler,
         default_full_movement_time=default_full_movement_time,
     )
 

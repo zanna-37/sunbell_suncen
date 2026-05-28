@@ -1,0 +1,378 @@
+"""Unit tests for the reactive coalescing burst scheduler.
+
+The scheduler is exercised against a fake transmit recorder and a fake burst
+builder, so no Home Assistant runtime or RF pulses are required. Tests use
+sub-second `motion_time` values to keep the suite fast.
+"""
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field
+
+import pytest
+
+import sys
+
+_sched_mod = sys.modules["sunbell_scheduler_under_test"]
+BurstScheduler = _sched_mod.BurstScheduler
+BurstStep = _sched_mod.BurstStep
+
+
+# A burst builder that records (remote, channels, action) and returns a tagged
+# pulse list so we can verify the FakeTransmit got what we expected without
+# decoding signed-microsecond pulses.
+@dataclass
+class FakeBuilder:
+    calls: list[tuple[str, tuple[int, ...], str]] = field(default_factory=list)
+
+    def __call__(self, remote: str, channels: list[int], action: str) -> list[int]:
+        self.calls.append((remote, tuple(channels), action))
+        return [len(self.calls)]   # sentinel; never decoded
+
+
+@dataclass
+class FakeTransmit:
+    loop: asyncio.AbstractEventLoop
+    sends: list[tuple[float, list[int]]] = field(default_factory=list)
+    on_air: float = 0.0
+    raise_on_call: int | None = None
+    pause: asyncio.Event | None = None
+    _calls: int = 0
+
+    async def send(self, pulses: list[int]) -> None:
+        self._calls += 1
+        if self.raise_on_call == self._calls:
+            raise RuntimeError("simulated transmit failure")
+        if self.pause is not None:
+            await self.pause.wait()
+        ts = self.loop.time()
+        if self.on_air > 0:
+            await asyncio.sleep(self.on_air)
+        self.sends.append((ts, list(pulses)))
+
+
+@pytest.fixture
+async def env():
+    loop = asyncio.get_running_loop()
+    builder = FakeBuilder()
+    transmit = FakeTransmit(loop=loop)
+    sched = BurstScheduler(loop, transmit, builder)
+    sched.start()
+    try:
+        yield sched, transmit, builder
+    finally:
+        await sched.async_close()
+
+
+async def _drain(loop: asyncio.AbstractEventLoop, ticks: int = 5) -> None:
+    """Let the scheduler run a few event-loop iterations."""
+    for _ in range(ticks):
+        await asyncio.sleep(0)
+
+
+# --- helpers ---------------------------------------------------------------
+
+def step(
+    blind: tuple[str, int],
+    action: str,
+    *,
+    motion_time: float = 0.0,
+    on_dispatch=None,
+    on_complete=None,
+) -> BurstStep:
+    return BurstStep(
+        blind_key=blind,
+        action=action,
+        motion_time=motion_time,
+        on_dispatch=on_dispatch,
+        on_complete=on_complete,
+        enqueued_at=0.0,
+    )
+
+
+def by_action(builder: FakeBuilder) -> list[tuple[str, tuple[int, ...], str]]:
+    return list(builder.calls)
+
+
+# --- tests -----------------------------------------------------------------
+
+async def test_merge_same_action_heads(env):
+    """Two blinds same remote, same action -> one merged burst on channel union."""
+    sched, transmit, builder = env
+    fired = []
+    sched.submit(("0", 1), [step(("0", 1), "LONG_DOWN", on_complete=lambda: fired.append(1))])
+    sched.submit(("0", 2), [step(("0", 2), "LONG_DOWN", on_complete=lambda: fired.append(2))])
+    await asyncio.sleep(0.05)
+    assert builder.calls == [("0", (1, 2), "LONG_DOWN")]
+    assert sorted(fired) == [1, 2]
+    assert len(transmit.sends) == 1
+
+
+async def test_bin_by_remote_and_action(env):
+    """Same action on different remotes -> two bursts; same remote merges."""
+    sched, transmit, builder = env
+    sched.submit(("0", 1), [step(("0", 1), "LONG_DOWN")])
+    sched.submit(("0", 2), [step(("0", 2), "LONG_DOWN")])
+    sched.submit(("1", 3), [step(("1", 3), "LONG_DOWN")])
+    await asyncio.sleep(0.05)
+    actions = {(remote, action) for remote, _, action in builder.calls}
+    assert actions == {("0", "LONG_DOWN"), ("1", "LONG_DOWN")}
+    by_remote = {remote: channels for remote, channels, _ in builder.calls}
+    assert by_remote["0"] == (1, 2)
+    assert by_remote["1"] == (3,)
+
+
+async def test_opposite_directions_do_not_merge(env):
+    """LONG_UP on A and LONG_DOWN on B on the same remote -> two separate bursts."""
+    sched, transmit, builder = env
+    sched.submit(("0", 1), [step(("0", 1), "LONG_UP")])
+    sched.submit(("0", 2), [step(("0", 2), "LONG_DOWN")])
+    await asyncio.sleep(0.05)
+    actions = {(remote, action) for remote, _, action in builder.calls}
+    assert actions == {("0", "LONG_UP"), ("0", "LONG_DOWN")}
+
+
+async def test_chain_pacing(env):
+    """[DOWN(motion=0.1), LONG_DOWN, LONG_DOWN] -> LONG_DOWNs only after busy_until."""
+    sched, transmit, builder = env
+    loop = asyncio.get_running_loop()
+    sched.submit(
+        ("0", 1),
+        [
+            step(("0", 1), "DOWN", motion_time=0.1),
+            step(("0", 1), "LONG_DOWN"),
+            step(("0", 1), "LONG_DOWN"),
+        ],
+    )
+    t0 = loop.time()
+    await asyncio.sleep(0.2)
+    assert len(builder.calls) == 3
+    assert builder.calls[0][2] == "DOWN"
+    assert builder.calls[1][2] == "LONG_DOWN"
+    assert builder.calls[2][2] == "LONG_DOWN"
+    # the two LONG_DOWN bursts must have happened >= 0.1s after t0
+    assert transmit.sends[1][0] - t0 >= 0.09  # small tolerance for clock granularity
+    assert transmit.sends[2][0] - t0 >= 0.09
+
+
+async def test_preempt_mid_chain_drops_remaining():
+    """Preempting a tilt walk drops the rest; new chain takes over."""
+    loop = asyncio.get_running_loop()
+    builder = FakeBuilder()
+    # Use on_air so each send takes meaningful time -- gives the test a window
+    # to inject a preempt before the whole chain drains.
+    transmit = FakeTransmit(loop=loop, on_air=0.04)
+    sched = BurstScheduler(loop, transmit, builder)
+    sched.start()
+    try:
+        walked = []
+        sched.submit(
+            ("0", 1),
+            [
+                step(("0", 1), "LONG_DOWN", on_complete=lambda: walked.append("L1")),
+                step(("0", 1), "LONG_DOWN", on_complete=lambda: walked.append("L2")),
+                step(("0", 1), "LONG_DOWN", on_complete=lambda: walked.append("L3")),
+            ],
+        )
+        # Let ~one LONG_DOWN dispatch.
+        await asyncio.sleep(0.05)
+        # Preempt: queue [UP].
+        sched.submit(("0", 1), [step(("0", 1), "UP", motion_time=0.05)])
+        await asyncio.sleep(0.2)
+        actions = [a for _, _, a in builder.calls]
+        assert actions[-1] == "UP"
+        # At most one LONG_DOWN should have committed its on_complete; the rest
+        # were dropped before they could dispatch.
+        assert len(walked) <= 1
+    finally:
+        await sched.async_close()
+
+
+async def test_preempt_mid_motion_no_stop_special(env):
+    """STOP isn't special: any submit resets busy_until + clears pending settled."""
+    sched, transmit, builder = env
+    settled = []
+    sched.submit(
+        ("0", 1),
+        [step(("0", 1), "DOWN", motion_time=0.2,
+              on_complete=lambda: settled.append("anchor"))],
+    )
+    await asyncio.sleep(0.02)
+    assert builder.calls[-1][2] == "DOWN"
+    sched.submit(("0", 1), [step(("0", 1), "STOP")])
+    await asyncio.sleep(0.05)
+    actions = [a for _, _, a in builder.calls]
+    assert actions == ["DOWN", "STOP"]
+    # The pending anchor commit was cancelled.
+    await asyncio.sleep(0.3)   # long enough that the original 0.2 settle would have fired
+    assert settled == []
+
+
+async def test_preempt_during_transmit_await_skips_callbacks():
+    """If submit runs while transmit.send is in flight, the in-flight step's
+    callbacks must NOT fire; the new chain takes over."""
+    loop = asyncio.get_running_loop()
+    builder = FakeBuilder()
+    transmit = FakeTransmit(loop=loop, pause=asyncio.Event())
+    sched = BurstScheduler(loop, transmit, builder)
+    sched.start()
+    try:
+        dispatched = []
+        completed = []
+        sched.submit(
+            ("0", 1),
+            [step(("0", 1), "UP", motion_time=0.05,
+                  on_dispatch=lambda: dispatched.append("old"),
+                  on_complete=lambda: completed.append("old"))],
+        )
+        # Let the worker pick the step into a sweep and enter the await.
+        await _drain(loop, ticks=3)
+        # The worker is now paused inside transmit.send.
+        # Submit a fresh chain for the same blind.
+        sched.submit(
+            ("0", 1),
+            [step(("0", 1), "DOWN", motion_time=0.05,
+                  on_dispatch=lambda: dispatched.append("new"),
+                  on_complete=lambda: completed.append("new"))],
+        )
+        # Release the transmit. The old step's callbacks should be skipped.
+        transmit.pause.set()
+        await asyncio.sleep(0.2)
+        assert "old" not in dispatched
+        assert "old" not in completed
+        assert "new" in dispatched
+        assert "new" in completed
+    finally:
+        await sched.async_close()
+
+
+async def test_fairness_oldest_head_wins(env):
+    """Oldest enqueued_at wins. Submit A first; later submit a larger bin B.
+    A should still dispatch first."""
+    sched, transmit, builder = env
+    sched.submit(("0", 1), [step(("0", 1), "LONG_DOWN")])
+    # Force a tiny gap so enqueued_at differs.
+    await asyncio.sleep(0.005)
+    sched.submit(("0", 2), [step(("0", 2), "LONG_UP")])
+    sched.submit(("0", 3), [step(("0", 3), "LONG_UP")])
+    await asyncio.sleep(0.05)
+    # A's LONG_DOWN must dispatch before the LONG_UP bin.
+    actions = [a for _, _, a in builder.calls]
+    assert actions.index("LONG_DOWN") < actions.index("LONG_UP")
+
+
+async def test_fairness_tiebreak_larger_bin(env):
+    """Identical enqueued_at -> larger bin wins."""
+    sched, transmit, builder = env
+    # Submit all in the same tick so enqueued_at is identical.
+    sched.submit(("0", 1), [step(("0", 1), "LONG_UP")])
+    sched.submit(("0", 2), [step(("0", 2), "LONG_DOWN")])
+    sched.submit(("0", 3), [step(("0", 3), "LONG_DOWN")])
+    await asyncio.sleep(0.05)
+    actions = [a for _, _, a in builder.calls]
+    assert actions[0] == "LONG_DOWN"   # larger bin first
+
+
+async def test_deferred_on_complete_fires_after_motion_time(env):
+    """on_complete for UP/DOWN fires after busy_until expires."""
+    sched, transmit, builder = env
+    loop = asyncio.get_running_loop()
+    when = []
+    sched.submit(
+        ("0", 1),
+        [step(("0", 1), "DOWN", motion_time=0.1,
+              on_complete=lambda: when.append(loop.time()))],
+    )
+    t0 = loop.time()
+    await asyncio.sleep(0.05)
+    assert when == []   # not yet
+    await asyncio.sleep(0.1)
+    assert len(when) == 1
+    assert when[0] - t0 >= 0.09
+
+
+async def test_pending_settled_replaced_by_next_chain(env):
+    """A second fresh chain on the same blind cancels the first's settled cb."""
+    sched, transmit, builder = env
+    fired = []
+    sched.submit(
+        ("0", 1),
+        [step(("0", 1), "DOWN", motion_time=0.1,
+              on_complete=lambda: fired.append("first"))],
+    )
+    await asyncio.sleep(0.02)
+    sched.submit(
+        ("0", 1),
+        [step(("0", 1), "DOWN", motion_time=0.1,
+              on_complete=lambda: fired.append("second"))],
+    )
+    await asyncio.sleep(0.3)
+    assert fired == ["second"]
+
+
+async def test_dispatch_failure_drops_step(env):
+    """If transmit.send raises, the step is dropped without firing callbacks."""
+    sched, transmit, builder = env
+    transmit.raise_on_call = 1
+    callbacks = []
+    sched.submit(
+        ("0", 1),
+        [step(("0", 1), "DOWN", motion_time=0.05,
+              on_dispatch=lambda: callbacks.append("d"),
+              on_complete=lambda: callbacks.append("c"))],
+    )
+    await asyncio.sleep(0.1)
+    # Builder was called (the step was selected), but callbacks didn't fire.
+    assert builder.calls == [("0", (1,), "DOWN")]
+    assert callbacks == []
+    # Next submit on the same blind still works.
+    transmit.raise_on_call = None
+    sched.submit(("0", 1), [step(("0", 1), "STOP", on_complete=lambda: callbacks.append("stop"))])
+    await asyncio.sleep(0.05)
+    assert callbacks == ["stop"]
+
+
+async def test_anonymous_state_gc(env):
+    """Anonymous (entity=None) BlindStates are GC'd once the queue empties."""
+    sched, transmit, builder = env
+    sched.submit(("0", 9), [step(("0", 9), "DOWN", motion_time=0.05)], entity=None)
+    await asyncio.sleep(0.15)   # wait long enough for the settle + GC pass
+    assert ("0", 9) not in sched._blinds   # noqa: SLF001 -- internal check
+
+
+async def test_shutdown_before_dispatch():
+    """Closing before the first burst dispatches must not fire callbacks
+    and must not raise."""
+    loop = asyncio.get_running_loop()
+    builder = FakeBuilder()
+    transmit = FakeTransmit(loop=loop, pause=asyncio.Event())   # holds first send
+    sched = BurstScheduler(loop, transmit, builder)
+    sched.start()
+    fired = []
+    sched.submit(
+        ("0", 1),
+        [step(("0", 1), "UP", motion_time=0.05,
+              on_complete=lambda: fired.append("up"))],
+    )
+    await _drain(loop, ticks=2)   # let the worker enter transmit.send
+    await sched.async_close()
+    assert fired == []
+
+
+async def test_stop_is_peer_not_special(env):
+    """STOP follows the same busy_until rule as everything else. A STOP step
+    that's NOT preceded by submit() must wait for prior motion's busy_until."""
+    sched, transmit, builder = env
+    loop = asyncio.get_running_loop()
+    sched.submit(
+        ("0", 1),
+        [
+            step(("0", 1), "DOWN", motion_time=0.1),
+            step(("0", 1), "STOP"),
+        ],
+    )
+    t0 = loop.time()
+    await asyncio.sleep(0.2)
+    assert [a for _, _, a in builder.calls] == ["DOWN", "STOP"]
+    # The STOP must have been dispatched at least motion_time later than the DOWN.
+    assert transmit.sends[1][0] - transmit.sends[0][0] >= 0.09

@@ -44,8 +44,11 @@ def _list_transmit_services(hass: HomeAssistant) -> list[str]:
 
 
 def _channels_to_blinds(channels: list[int], remote_id: str) -> list[dict[str, Any]]:
-    """Default name for each channel = 'chN'; user can rename in HA's entity UI."""
-    return [{CONF_CHANNEL: c, CONF_NAME: f"ch{c}"} for c in channels]
+    """Default name = 'Sunbell R{remote} ch{channel}'; user can rename in HA's entity UI."""
+    return [
+        {CONF_CHANNEL: c, CONF_NAME: f"Sunbell R{remote_id} ch{c}"}
+        for c in channels
+    ]
 
 
 def _travel_time_selector() -> selector.NumberSelector:
