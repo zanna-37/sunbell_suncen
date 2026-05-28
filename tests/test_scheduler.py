@@ -188,8 +188,10 @@ async def test_preempt_mid_chain_drops_remaining():
         await sched.async_close()
 
 
-async def test_preempt_mid_motion_no_stop_special(env):
-    """STOP isn't special: any submit resets busy_until + clears pending settled."""
+async def test_stop_submit_mid_motion_is_legitimate_override(env):
+    """STOP is the only command the centralina honors mid-fast-motion, so a
+    STOP submit dispatches directly without an auto-prepended STOP prefix.
+    Pending settled callbacks from the preempted motion are dropped."""
     sched, transmit, builder = env
     settled = []
     sched.submit(
@@ -208,9 +210,16 @@ async def test_preempt_mid_motion_no_stop_special(env):
     assert settled == []
 
 
-async def test_preempt_during_transmit_await_skips_callbacks():
-    """If submit runs while transmit.send is in flight, the in-flight step's
-    callbacks must NOT fire; the new chain takes over."""
+async def test_preempt_during_transmit_await_skips_callbacks_and_locks_out():
+    """Two behaviors composed: a submit landing while transmit.send is in
+    flight must (a) skip the in-flight step's callbacks via the queue-head
+    identity check, and (b) trigger the hardware lockout -- because the
+    in-flight step was a fast UP and the new chain is non-STOP, the
+    scheduler must auto-prepend STOP. Wire ends up as [UP, STOP, DOWN].
+
+    This also covers the pre-await busy_until set: without it the lockout
+    check in submit() would see busy_until=0 (the old code only set
+    busy_until after the await returned) and slip the new chain through."""
     loop = asyncio.get_running_loop()
     builder = FakeBuilder()
     transmit = FakeTransmit(loop=loop, pause=asyncio.Event())
@@ -227,8 +236,9 @@ async def test_preempt_during_transmit_await_skips_callbacks():
         )
         # Let the worker pick the step into a sweep and enter the await.
         await _drain(loop, ticks=3)
-        # The worker is now paused inside transmit.send.
-        # Submit a fresh chain for the same blind.
+        # The worker is now paused inside transmit.send. busy_until for this
+        # blind has already been set (pre-await), so submit() will see the
+        # lockout.
         sched.submit(
             ("0", 1),
             [step(("0", 1), "DOWN", motion_time=0.05,
@@ -242,6 +252,7 @@ async def test_preempt_during_transmit_await_skips_callbacks():
         assert "old" not in completed
         assert "new" in dispatched
         assert "new" in completed
+        assert [a for _, _, a in builder.calls] == ["UP", "STOP", "DOWN"]
     finally:
         await sched.async_close()
 
@@ -357,6 +368,25 @@ async def test_shutdown_before_dispatch():
     await _drain(loop, ticks=2)   # let the worker enter transmit.send
     await sched.async_close()
     assert fired == []
+
+
+async def test_lockout_injects_stop_for_non_stop_submit_mid_motion(env):
+    """Submitting a non-STOP chain while a fast UP/DOWN is mid-motion makes
+    the scheduler inject a STOP ahead of the new chain. Hardware constraint:
+    the centralina silently drops any non-STOP command received while a
+    motor cycle is in progress."""
+    sched, transmit, builder = env
+    loop = asyncio.get_running_loop()
+
+    sched.submit(("0", 1), [step(("0", 1), "UP", motion_time=0.2)])
+    await _drain(loop, ticks=3)
+    # UP has dispatched; busy_until is set. Blind is locked.
+    assert [a for _, _, a in builder.calls] == ["UP"]
+
+    sched.submit(("0", 1), [step(("0", 1), "DOWN", motion_time=0.05)])
+    await asyncio.sleep(0.1)
+
+    assert [a for _, _, a in builder.calls] == ["UP", "STOP", "DOWN"]
 
 
 async def test_opportunistic_merge_when_walk_catches_up(env):

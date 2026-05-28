@@ -166,12 +166,36 @@ class BurstScheduler:
         on `transmit.send`) completes on the wire but its callbacks are
         skipped via the worker's post-dispatch identity check. Sync -- no
         awaits. Wakes the worker.
+
+        Hardware lockout: if the blind is currently mid-fast-motion
+        (busy_until > now) and the new chain's first action is not STOP, a
+        synthesized STOP is auto-prepended. The SUNCEN centralina silently
+        drops any non-STOP command received while a UP/DOWN motor cycle is in
+        progress; STOP is the only legitimate override. The injected STOP
+        carries no callbacks -- state invalidation for the in-flight motion
+        already fired via that motion's on_dispatch (_begin_motion).
         """
         st = self._get_or_create(blind_key, entity)
+        now = self._loop.time()
+        needs_stop_prefix = (
+            st.busy_until > now
+            and steps
+            and steps[0].action != "STOP"
+        )
         st.queue.clear()
         st.busy_until = 0.0
         st.pending_settled = None
-        now = self._loop.time()
+        if needs_stop_prefix:
+            st.queue.append(
+                BurstStep(
+                    blind_key=blind_key,
+                    action="STOP",
+                    motion_time=0.0,
+                    on_dispatch=None,
+                    on_complete=None,
+                    enqueued_at=now,
+                )
+            )
         for step in steps:
             st.queue.append(
                 BurstStep(
@@ -240,6 +264,18 @@ class BurstScheduler:
         channels = sorted({st.key[1] for st, _ in chosen})
 
         pulses = self._build_burst(remote, channels, action)
+
+        # Lock the blinds BEFORE awaiting transmit so a non-STOP submit
+        # landing during the await sees `busy_until > now` and auto-prepends
+        # STOP. Without this provisional lock, the RF burst is already on
+        # its way to the centralina but the scheduler still thinks the
+        # blind is idle, letting a stomping submit slip past the lockout
+        # check and dispatch a command the centralina will silently drop.
+        pre_dispatch = self._loop.time()
+        for st, step in chosen:
+            if step.motion_time > 0:
+                st.busy_until = pre_dispatch + step.motion_time
+
         try:
             await self._transmit.send(pulses)
         except asyncio.CancelledError:
@@ -250,6 +286,8 @@ class BurstScheduler:
                 remote, action, channels,
             )
             for st, step in chosen:
+                if step.motion_time > 0:
+                    st.busy_until = 0.0
                 if st.queue and st.queue[0] is step:
                     st.queue.popleft()
             return
@@ -290,7 +328,11 @@ class BurstScheduler:
     def _earliest_future_event(self, now: float) -> float | None:
         out: float | None = None
         for st in self._blinds.values():
-            if st.queue and st.busy_until > now:
+            # Wake on busy_until even for empty-queue blinds: an anonymous
+            # one needs a tick to GC, and an entity-backed one may receive
+            # a fresh submit() that triggers the lockout check against the
+            # still-live busy_until.
+            if st.busy_until > now:
                 if out is None or st.busy_until < out:
                     out = st.busy_until
             ps = st.pending_settled
@@ -300,9 +342,10 @@ class BurstScheduler:
         return out
 
     def _gc_anonymous(self) -> None:
+        now = self._loop.time()
         dead: list[BlindKey] = []
         for key, st in self._blinds.items():
-            if st.queue or st.pending_settled is not None:
+            if st.queue or st.pending_settled is not None or st.busy_until > now:
                 continue
             if st.entity_ref is None or st.entity_ref() is None:
                 dead.append(key)
