@@ -188,6 +188,44 @@ async def test_preempt_mid_chain_drops_remaining():
         await sched.async_close()
 
 
+async def test_preempt_during_wire_gap_drops_next_step_before_wire():
+    """A preempt landing during the scheduler-side wire gap drops the next
+    tilt step before it reaches the wire. Without scheduler-owned pacing
+    (gap inside TransmitQueue), the next LONG_DOWN would already be
+    committed when the preempt arrives, the wire would emit one more tilt
+    step, and the physical blind would advance one extra notch before
+    moving up."""
+    loop = asyncio.get_running_loop()
+    builder = FakeBuilder()
+    transmit = FakeTransmit(loop=loop)
+    # Realistic-ish gap, scaled down so the test stays fast.
+    sched = BurstScheduler(loop, transmit, builder, wire_gap_seconds=0.1)
+    sched.start()
+    try:
+        walked = []
+        sched.submit(
+            ("0", 1),
+            [
+                step(("0", 1), "LONG_DOWN", on_complete=lambda: walked.append("L1")),
+                step(("0", 1), "LONG_DOWN", on_complete=lambda: walked.append("L2")),
+                step(("0", 1), "LONG_DOWN", on_complete=lambda: walked.append("L3")),
+            ],
+        )
+        # Let the first LONG_DOWN dispatch; the second is now held in the
+        # scheduler queue, paced behind the 0.1s wire gap.
+        await asyncio.sleep(0.03)
+        sched.submit(("0", 1), [step(("0", 1), "UP", motion_time=0.05)])
+        # Wait long enough for the wire-gap window to pass and UP to fire.
+        await asyncio.sleep(0.3)
+        actions = [a for _, _, a in builder.calls]
+        # Exactly one LONG_DOWN reaches the wire (the one that had already
+        # dispatched), then UP. No second LONG_DOWN snuck through the gap.
+        assert actions == ["LONG_DOWN", "UP"]
+        assert walked == ["L1"]
+    finally:
+        await sched.async_close()
+
+
 async def test_stop_submit_mid_motion_is_legitimate_override(env):
     """STOP is the only command the centralina honors mid-fast-motion, so a
     STOP submit dispatches directly without an auto-prepended STOP prefix.

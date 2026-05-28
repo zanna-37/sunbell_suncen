@@ -15,6 +15,15 @@ settled callback is dropped. No action is special at the sweep -- STOP, UP,
 DOWN, LONG_UP, LONG_DOWN are all peers; the asymmetry between "fast" (UP/DOWN)
 and "slow" (LONG_*) actions is encoded in `motion_time` only.
 
+Wire pacing: the SUNCEN centralina needs dead air between bursts. The
+scheduler holds that gap itself (via `_wire_ready_at`) rather than delegating
+it to `TransmitQueue`. The reason is preemption -- a step paced inside the
+scheduler's own `_wait` is still in `BlindState.queue` and a `submit()` can
+drop it before it ever reaches the wire; a step already handed to
+`TransmitQueue` is committed and will fire regardless. The downstream
+`TransmitQueue` keeps its own pacing as defence-in-depth, but in production
+it always sees `_earliest_next <= now` because the scheduler beat it to it.
+
 The scheduler is decoupled from Home Assistant: the constructor takes a loop
 and a duck-typed transmit object (with `async def send(pulses: list[int])`).
 In production we wire in `TransmitQueue`; in tests we wire in a fake recorder.
@@ -85,6 +94,8 @@ class BurstScheduler:
         loop: asyncio.AbstractEventLoop,
         transmit: TransmitProtocol,
         burst_builder: BurstBuilder,
+        *,
+        wire_gap_seconds: float = 0.0,
     ) -> None:
         self._loop = loop
         self._transmit = transmit
@@ -92,6 +103,8 @@ class BurstScheduler:
         self._blinds: dict[BlindKey, BlindState] = {}
         self._wake = asyncio.Event()
         self._worker: asyncio.Task[None] | None = None
+        self._wire_gap_seconds = wire_gap_seconds
+        self._wire_ready_at: float = 0.0
 
     # ------------------------------------------------------------------ chains
     @staticmethod
@@ -248,6 +261,13 @@ class BurstScheduler:
             await self._wait(deadline)
             return
 
+        # Wire-gap pacing happens in the scheduler (not in TransmitQueue) so a
+        # submit() landing during the gap can still drop the next step --
+        # whereas a burst already handed to TransmitQueue is committed.
+        if self._wire_ready_at > now:
+            await self._wait(self._wire_ready_at)
+            return
+
         bins: dict[tuple[str, str], list[tuple[BlindState, BurstStep]]] = {}
         for st, step in ready:
             bins.setdefault((st.key[0], step.action), []).append((st, step))
@@ -285,6 +305,8 @@ class BurstScheduler:
                 "burst dispatch failed: remote=%s action=%s channels=%s",
                 remote, action, channels,
             )
+            # Brief back-off on failure so we don't hammer a disconnected ESP.
+            self._wire_ready_at = self._loop.time() + self._wire_gap_seconds
             for st, step in chosen:
                 if step.motion_time > 0:
                     st.busy_until = 0.0
@@ -293,6 +315,8 @@ class BurstScheduler:
             return
 
         dispatched_at = self._loop.time()
+        burst_duration = sum(abs(p) for p in pulses) / 1_000_000
+        self._wire_ready_at = dispatched_at + burst_duration + self._wire_gap_seconds
         for st, step in chosen:
             if not (st.queue and st.queue[0] is step):
                 continue

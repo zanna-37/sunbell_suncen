@@ -8,6 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from ._protocol.synth import build_symbol_burst_signed
 from .const import (
+    BURST_GAP_SECONDS,
     CONF_BLINDS,
     CONF_CHANNEL,
     CONF_FULL_MOVEMENT_TIME,
@@ -83,7 +84,12 @@ def build_runtime_data(
         merged.get(CONF_FULL_MOVEMENT_TIME, DEFAULT_FULL_MOVEMENT_TIME)
     )
     transmit_queue = TransmitQueue(hass, transmit_service_name)
-    scheduler = BurstScheduler(hass.loop, transmit_queue, build_symbol_burst_signed)
+    scheduler = BurstScheduler(
+        hass.loop,
+        transmit_queue,
+        build_symbol_burst_signed,
+        wire_gap_seconds=BURST_GAP_SECONDS,
+    )
     return SunbellRuntimeData(
         transmit_service_name=transmit_service_name,
         remotes=remotes,
