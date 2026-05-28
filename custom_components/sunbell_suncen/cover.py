@@ -146,6 +146,10 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         return self._tilt_level
 
     @property
+    def runtime(self) -> SunbellRuntimeData:
+        return self._runtime
+
+    @property
     def travel_time(self) -> int:
         return self._runtime.travel_time_for(self._blind)
 

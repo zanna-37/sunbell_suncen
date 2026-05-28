@@ -20,8 +20,6 @@ CONF_FULL_MOVEMENT_TIME: Final = "full_movement_time"   # seconds; entry default
 # --- services --------------------------------------------------------------
 SERVICE_SEND_GROUP: Final = "send_group"
 SERVICE_SEND_GROUP_RAW: Final = "send_group_raw"
-CONF_REMOTE: Final = "remote"
-CONF_CHANNELS: Final = "channels"
 CONF_ACTION: Final = "action"
 CONF_TILT_POSITION: Final = "tilt_position"
 

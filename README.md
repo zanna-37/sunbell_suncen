@@ -102,12 +102,9 @@ Because the centralina only tilts when `LONG_` bursts match the motor's
 last fast direction, do an `open` or `close` first if a blind's tilt has
 drifted out of sync.
 
-`set_tilt_position` requires entity or device targets (so the per-blind
-starting level is known); raw `remote` + `channels` is rejected for tilt.
-
-**By target (recommended).** Pick the cover entities — or whole remote
-devices — you want to move together; the integration groups them by remote
-and emits one burst sequence per group.
+Pick the cover entities — or whole remote devices — you want to move
+together; the integration groups them by remote and emits one burst sequence
+per group.
 
 ```yaml
 action: sunbell_suncen.send_group
@@ -127,17 +124,6 @@ target:
   device_id: <sunbell-remote-2-device>
 data:
   action: close
-```
-
-**By raw IDs.** Useful in shell scripts or when scripting against a remote
-you haven't exposed as entities.
-
-```yaml
-action: sunbell_suncen.send_group
-data:
-  remote: "2"
-  channels: [1, 2, 6]
-  action: open
 ```
 
 ## Removing a remote

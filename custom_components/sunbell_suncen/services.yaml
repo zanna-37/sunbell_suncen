@@ -4,9 +4,8 @@ send_group:
     Drive a group of Sunbell blinds with a single Home-Assistant cover command.
     Pick cover entities (or whole remote devices) in the target picker — the
     integration groups them by remote and computes the most efficient SUNCEN
-    burst sequence to reach the requested end state. Raw remote + channels are
-    also accepted for scripted callers. Tilt operations always re-anchor to
-    full-down first when needed; STOP invalidates the tracked tilt.
+    burst sequence to reach the requested end state. Tilt operations always
+    re-anchor to full-down first when needed; STOP invalidates the tracked tilt.
   target:
     entity:
       integration: sunbell_suncen
@@ -44,52 +43,6 @@ send_group:
           step: 1
           mode: slider
           unit_of_measurement: "%"
-    remote:
-      name: Remote ID
-      description: >-
-        Optional. Raw Sunbell remote (0..12). Required only if you don't
-        select target entities/devices.
-      required: false
-      example: "2"
-      selector:
-        select:
-          options:
-            - "0"
-            - "1"
-            - "2"
-            - "3"
-            - "4"
-            - "5"
-            - "6"
-            - "7"
-            - "8"
-            - "9"
-            - "10"
-            - "11"
-            - "12"
-    channels:
-      name: Channels
-      description: >-
-        Optional. Channels (1..12) on the remote above. Required only if you
-        don't select target entities/devices.
-      required: false
-      example: "[1, 2, 6]"
-      selector:
-        select:
-          multiple: true
-          options:
-            - "1"
-            - "2"
-            - "3"
-            - "4"
-            - "5"
-            - "6"
-            - "7"
-            - "8"
-            - "9"
-            - "10"
-            - "11"
-            - "12"
 
 send_group_raw:
   name: Send raw SUNCEN burst
@@ -120,49 +73,3 @@ send_group_raw:
             - "STOP"
             - "LONG_UP"
             - "LONG_DOWN"
-    remote:
-      name: Remote ID
-      description: >-
-        Optional. Raw Sunbell remote (0..12). Required only if you don't
-        select target entities/devices.
-      required: false
-      example: "2"
-      selector:
-        select:
-          options:
-            - "0"
-            - "1"
-            - "2"
-            - "3"
-            - "4"
-            - "5"
-            - "6"
-            - "7"
-            - "8"
-            - "9"
-            - "10"
-            - "11"
-            - "12"
-    channels:
-      name: Channels
-      description: >-
-        Optional. Channels (1..12) on the remote above. Required only if you
-        don't select target entities/devices.
-      required: false
-      example: "[1, 2, 6]"
-      selector:
-        select:
-          multiple: true
-          options:
-            - "1"
-            - "2"
-            - "3"
-            - "4"
-            - "5"
-            - "6"
-            - "7"
-            - "8"
-            - "9"
-            - "10"
-            - "11"
-            - "12"

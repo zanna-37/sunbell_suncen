@@ -96,14 +96,6 @@
         "tilt_position": {
           "name": "Posizione inclinazione",
           "description": "Inclinazione target 0..100 (%). Richiesto quando l'azione è 'Imposta inclinazione'; ignorato altrimenti."
-        },
-        "remote": {
-          "name": "ID radiocomando",
-          "description": "Opzionale. Radiocomando Sunbell (0..12). Richiesto solo se non selezioni entità/dispositivi nella destinazione."
-        },
-        "channels": {
-          "name": "Canali",
-          "description": "Opzionale. Canali (1..12) sul radiocomando indicato sopra. Richiesto solo se non selezioni entità/dispositivi nella destinazione."
         }
       }
     },
@@ -114,14 +106,6 @@
         "action": {
           "name": "Azione",
           "description": "Nome della sequenza RF SUNCEN raw (UP, DOWN, STOP, LONG_UP, LONG_DOWN)."
-        },
-        "remote": {
-          "name": "ID radiocomando",
-          "description": "Opzionale. Radiocomando Sunbell (0..12). Richiesto solo se non selezioni entità/dispositivi nella destinazione."
-        },
-        "channels": {
-          "name": "Canali",
-          "description": "Opzionale. Canali (1..12) sul radiocomando indicato sopra. Richiesto solo se non selezioni entità/dispositivi nella destinazione."
         }
       }
     }

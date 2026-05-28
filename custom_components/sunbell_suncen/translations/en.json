@@ -96,14 +96,6 @@
         "tilt_position": {
           "name": "Tilt position",
           "description": "Target tilt 0..100 (%). Required when action is 'Set tilt position'; ignored otherwise."
-        },
-        "remote": {
-          "name": "Remote ID",
-          "description": "Optional. Raw Sunbell remote (0..12). Required only when not targeting entities/devices."
-        },
-        "channels": {
-          "name": "Channels",
-          "description": "Optional. Channels (1..12) on the remote above. Required only when not targeting entities/devices."
         }
       }
     },
@@ -114,14 +106,6 @@
         "action": {
           "name": "Action",
           "description": "Raw SUNCEN burst name (UP, DOWN, STOP, LONG_UP, LONG_DOWN)."
-        },
-        "remote": {
-          "name": "Remote ID",
-          "description": "Optional. Raw Sunbell remote (0..12). Required only when not targeting entities/devices."
-        },
-        "channels": {
-          "name": "Channels",
-          "description": "Optional. Channels (1..12) on the remote above. Required only when not targeting entities/devices."
         }
       }
     }
