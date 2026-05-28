@@ -11,7 +11,7 @@ from homeassistant.helpers import (
     config_validation as cv,
     device_registry as dr,
     entity_platform,
-    service as service_helper,
+    target as target_helper,
 )
 
 from .const import (
@@ -220,7 +220,9 @@ def _resolve_targets(
 ) -> list["SunbellBlind"]:
     """Collect live SunbellBlind entities from the call's entity/device targets."""
     blinds = _blinds_by_entity_id(hass)
-    selected = service_helper.async_extract_referenced_entity_ids(hass, call)
+    selected = target_helper.async_extract_referenced_entity_ids(
+        hass, target_helper.TargetSelection(call.data)
+    )
     return [
         blinds[entity_id]
         for entity_id in selected.referenced | selected.indirectly_referenced
