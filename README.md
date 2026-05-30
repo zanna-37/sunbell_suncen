@@ -126,6 +126,15 @@ data:
   action: close
 ```
 
+## Editing a remote's channels
+
+To add or remove channels on an existing remote, go to **Settings → Devices &
+Services → Sunbell SUNCEN → Configure → Edit a remote's channels**, pick the
+remote, and enter the full channel list you want (e.g. `1,3,5-8`). Channels you
+keep retain their name and any per-blind travel-time override; newly added
+channels get a default name; channels you drop have their cover entities removed
+from the registry on the next reload.
+
 ## Removing a remote
 
 Delete a configured remote either from **Settings → Devices & Services →

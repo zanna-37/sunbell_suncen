@@ -43,11 +43,36 @@ def _list_transmit_services(hass: HomeAssistant) -> list[str]:
     return sorted(name for name in services if name.endswith(TRANSMIT_SERVICE_SUFFIX))
 
 
+def _default_blind_name(remote_id: str, channel: int) -> str:
+    """Default blind name; user can rename in HA's entity UI."""
+    return f"Sunbell R{remote_id} ch{channel}"
+
+
 def _channels_to_blinds(channels: list[int], remote_id: str) -> list[dict[str, Any]]:
     """Default name = 'Sunbell R{remote} ch{channel}'; user can rename in HA's entity UI."""
     return [
-        {CONF_CHANNEL: c, CONF_NAME: f"Sunbell R{remote_id} ch{c}"}
+        {CONF_CHANNEL: c, CONF_NAME: _default_blind_name(remote_id, c)}
         for c in channels
+    ]
+
+
+def _channels_to_spec(channels: list[int]) -> str:
+    """Render a channel list as a comma-separated spec for pre-filling the edit form."""
+    return ",".join(str(c) for c in sorted(channels))
+
+
+def _merge_channels(
+    existing_blinds: list[dict[str, Any]], channels: list[int], remote_id: str
+) -> list[dict[str, Any]]:
+    """Reconcile a remote's blinds to exactly `channels`.
+
+    Retained channels keep their existing name and travel-time override; newly
+    added channels get a default name; channels no longer listed are dropped.
+    """
+    by_channel = {int(b[CONF_CHANNEL]): b for b in existing_blinds}
+    return [
+        by_channel.get(c, {CONF_CHANNEL: c, CONF_NAME: _default_blind_name(remote_id, c)})
+        for c in sorted(channels)
     ]
 
 
@@ -172,12 +197,14 @@ class SunbellOptionsFlow(OptionsFlow):
 
     def __init__(self) -> None:
         self._selected_blind: tuple[str, int] | None = None
+        self._editing_remote: str | None = None
 
     async def async_step_init(self, _user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         return self.async_show_menu(
             step_id="init",
             menu_options=[
                 "add_remote",
+                "edit_remote",
                 "remove_remote",
                 "set_default_travel_time",
                 "configure_blind",
@@ -216,6 +243,72 @@ class SunbellOptionsFlow(OptionsFlow):
                 ),
             }),
             errors=errors,
+        )
+
+    async def async_step_edit_remote(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        current = self._current_remotes()
+        if not current:
+            return self.async_abort(reason="no_remote_to_edit")
+
+        if user_input is not None:
+            self._editing_remote = user_input[CONF_REMOTE_ID]
+            return await self.async_step_edit_remote_channels()
+
+        return self.async_show_form(
+            step_id="edit_remote",
+            data_schema=vol.Schema({
+                vol.Required(CONF_REMOTE_ID): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[r[CONF_REMOTE_ID] for r in current]
+                    )
+                ),
+            }),
+        )
+
+    async def async_step_edit_remote_channels(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        assert self._editing_remote is not None
+        remote_id = self._editing_remote
+        current = self._current_remotes()
+        target = next((r for r in current if r[CONF_REMOTE_ID] == remote_id), None)
+        if target is None:
+            return self.async_abort(reason="no_remote_to_edit")
+        existing_blinds = list(target.get(CONF_BLINDS, []))
+
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            try:
+                channels = parse_channels(user_input["channels"])
+            except ValueError:
+                errors["channels"] = "invalid_channels"
+            else:
+                if not channels:
+                    errors["channels"] = "no_channels"
+                else:
+                    merged = _merge_channels(existing_blinds, channels, remote_id)
+                    updated = [
+                        {**r, CONF_BLINDS: merged}
+                        if r[CONF_REMOTE_ID] == remote_id
+                        else r
+                        for r in current
+                    ]
+                    return self._persist_remotes(updated)
+
+        default_spec = _channels_to_spec(
+            [int(b[CONF_CHANNEL]) for b in existing_blinds]
+        )
+        return self.async_show_form(
+            step_id="edit_remote_channels",
+            data_schema=vol.Schema({
+                vol.Required("channels", default=default_spec): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+                ),
+            }),
+            errors=errors,
+            description_placeholders={"remote": remote_id},
         )
 
     async def async_step_remove_remote(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:

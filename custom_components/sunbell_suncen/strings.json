@@ -34,6 +34,7 @@
       "init": {
         "menu_options": {
           "add_remote": "Add a remote",
+          "edit_remote": "Edit a remote's channels",
           "remove_remote": "Remove a remote",
           "set_default_travel_time": "Set default travel time",
           "configure_blind": "Configure a blind"
@@ -43,6 +44,19 @@
         "title": "Add a Sunbell remote",
         "data": {
           "remote_id": "Remote ID",
+          "channels": "Channels (e.g. 1,2,6)"
+        }
+      },
+      "edit_remote": {
+        "title": "Edit a remote",
+        "data": {
+          "remote_id": "Remote to edit"
+        }
+      },
+      "edit_remote_channels": {
+        "title": "Edit channels for remote {remote}",
+        "description": "List the full set of channels (1..12) for this remote. Adding a channel creates a new blind; removing one deletes that blind and its settings.",
+        "data": {
           "channels": "Channels (e.g. 1,2,6)"
         }
       },
@@ -77,9 +91,11 @@
     },
     "error": {
       "invalid_channels": "Invalid channel list.",
-      "duplicate_remote": "That remote ID is already configured."
+      "duplicate_remote": "That remote ID is already configured.",
+      "no_channels": "At least one channel is required."
     },
     "abort": {
+      "no_remote_to_edit": "No remotes configured yet.",
       "no_remote_to_remove": "No remotes configured yet.",
       "no_blinds": "No blinds configured yet."
     }

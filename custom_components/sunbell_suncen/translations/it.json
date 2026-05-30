@@ -34,6 +34,7 @@
       "init": {
         "menu_options": {
           "add_remote": "Aggiungi un radiocomando",
+          "edit_remote": "Modifica i canali di un radiocomando",
           "remove_remote": "Rimuovi un radiocomando",
           "set_default_travel_time": "Imposta tempo di movimento predefinito",
           "configure_blind": "Configura una tapparella"
@@ -43,6 +44,19 @@
         "title": "Aggiungi un radiocomando Sunbell",
         "data": {
           "remote_id": "ID radiocomando",
+          "channels": "Canali (es. 1,2,6)"
+        }
+      },
+      "edit_remote": {
+        "title": "Modifica un radiocomando",
+        "data": {
+          "remote_id": "Radiocomando da modificare"
+        }
+      },
+      "edit_remote_channels": {
+        "title": "Modifica i canali del radiocomando {remote}",
+        "description": "Elenca l'insieme completo dei canali (1..12) per questo radiocomando. Aggiungere un canale crea una nuova tapparella; rimuoverne uno elimina quella tapparella e le sue impostazioni.",
+        "data": {
           "channels": "Canali (es. 1,2,6)"
         }
       },
@@ -77,9 +91,11 @@
     },
     "error": {
       "invalid_channels": "Elenco dei canali non valido.",
-      "duplicate_remote": "Quell'ID radiocomando è già configurato."
+      "duplicate_remote": "Quell'ID radiocomando è già configurato.",
+      "no_channels": "È richiesto almeno un canale."
     },
     "abort": {
+      "no_remote_to_edit": "Nessun radiocomando da modificare.",
       "no_remote_to_remove": "Nessun radiocomando configurato.",
       "no_blinds": "Nessuna tapparella configurata."
     }

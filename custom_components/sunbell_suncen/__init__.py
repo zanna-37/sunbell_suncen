@@ -11,6 +11,7 @@ from homeassistant.helpers import (
     config_validation as cv,
     device_registry as dr,
     entity_platform,
+    entity_registry as er,
     target as target_helper,
 )
 
@@ -77,6 +78,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: SunbellConfigEntry) -> b
     runtime.scheduler.start()
     entry.runtime_data = runtime
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _prune_orphan_entities(hass, entry, runtime)
     _prune_orphan_devices(hass, entry, runtime)
     _ensure_services_registered(hass)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -124,6 +126,28 @@ async def async_remove_config_entry_device(
 
 async def _async_update_listener(hass: HomeAssistant, entry: SunbellConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _prune_orphan_entities(
+    hass: HomeAssistant,
+    entry: SunbellConfigEntry,
+    runtime: SunbellRuntimeData,
+) -> None:
+    """Drop entity registry entries whose (remote, channel) is no longer configured.
+
+    Removing a channel from a remote leaves the remote's device in place, so the
+    device-level prune won't catch it; this clears the stale per-channel cover
+    entities so they don't linger as unavailable.
+    """
+    ent_reg = er.async_get(hass)
+    valid_unique_ids = {
+        f"{blind.remote}_ch{blind.channel}"
+        for rc in runtime.remotes
+        for blind in rc.blinds
+    }
+    for entity in list(er.async_entries_for_config_entry(ent_reg, entry.entry_id)):
+        if entity.unique_id not in valid_unique_ids:
+            ent_reg.async_remove(entity.entity_id)
 
 
 def _prune_orphan_devices(
