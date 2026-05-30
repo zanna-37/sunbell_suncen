@@ -10,8 +10,6 @@ send_group:
     entity:
       integration: sunbell_suncen
       domain: cover
-    device:
-      integration: sunbell_suncen
   fields:
     action:
       name: Action
@@ -57,8 +55,6 @@ send_group_raw:
     entity:
       integration: sunbell_suncen
       domain: cover
-    device:
-      integration: sunbell_suncen
   fields:
     action:
       name: Action

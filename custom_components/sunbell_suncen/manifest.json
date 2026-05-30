@@ -1,7 +1,6 @@
 {
   "domain": "sunbell_suncen",
   "name": "Sunbell SUNCEN",
-  "version": "0.1.0",
   "codeowners": ["@zanna-37"],
   "config_flow": true,
   "dependencies": ["esphome"],
@@ -9,5 +8,6 @@
   "integration_type": "hub",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/zanna-37/sunbell-suncen-home-assistant/issues",
-  "requirements": []
+  "requirements": [],
+  "version": "0.1.0"
 }
