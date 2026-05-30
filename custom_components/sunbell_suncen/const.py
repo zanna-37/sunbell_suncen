@@ -16,6 +16,7 @@ CONF_BLINDS: Final = "blinds"
 CONF_CHANNEL: Final = "channel"                     # 1..12
 CONF_NAME: Final = "name"
 CONF_FULL_MOVEMENT_TIME: Final = "full_movement_time"   # seconds; entry default or per-blind override
+CONF_AT_ANCHOR_SETTLE_TIME: Final = "at_anchor_settle_time"   # seconds; entry default (global only)
 
 # --- services --------------------------------------------------------------
 SERVICE_SEND_GROUP: Final = "send_group"
@@ -80,6 +81,13 @@ ATTR_POSITION_INTERNAL: Final = "position_internal"  # 0 | 100 | None
 # config; the integration entry has its own default that supersedes this
 # module-level fallback.
 DEFAULT_FULL_MOVEMENT_TIME: Final = 30
+
+# Shortened settle time used when a fast UP/DOWN is issued and the blind is
+# ALREADY at the matching end-state (UP on position 100, DOWN on position 0).
+# The motor doesn't traverse — it just briefly re-anchors — so waiting the
+# full traversal time would needlessly stall the scheduler. Global only:
+# there is no per-blind override.
+DEFAULT_AT_ANCHOR_SETTLE_TIME: Final = 10
 
 # Minimum dead-air time between consecutive bursts, in seconds. The SUNCEN
 # centralina requires this gap to commit each command; the integration paces

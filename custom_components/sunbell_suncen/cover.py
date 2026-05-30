@@ -6,10 +6,14 @@ the per-entry `BurstScheduler` as a pre-decomposed chain of `BurstStep`s with
 entity-bound callbacks for the per-step state commits.
 
 State machine summary:
-- Fast UP/DOWN: chain is `[UP|DOWN(motion_time=travel_time)]`.
-  on_dispatch clears tilt + position to "in motion"; on_complete (fired at
-  busy_until expiry) commits the post-reversal anchor (UP -> level 1 / pos 100,
-  DOWN -> level 7 / pos 0).
+- Fast UP/DOWN: chain is `[UP|DOWN(motion_time=settle)]`.
+  `settle` is the entry's `default_full_movement_time` in the general case,
+  but collapses to `at_anchor_settle_time` when the blind is already at the
+  matching end-state (UP on position 100, DOWN on position 0) -- the motor
+  just re-anchors instead of traversing, so the longer wait would needlessly
+  stall the scheduler. on_dispatch clears tilt + position to "in motion";
+  on_complete (fired at busy_until expiry) commits the post-reversal anchor
+  (UP -> level 1 / pos 100, DOWN -> level 7 / pos 0).
 - STOP: chain is `[STOP(motion_time=0)]`. on_dispatch clears both; no
   on_complete (state stays unknown).
 - set_tilt_position(level=T) uses the entity's committed `_tilt_level` to
@@ -241,7 +245,7 @@ class SunbellBlind(RestoreEntity, CoverEntity):
 
     def build_raw_chain(self, action: str, *, invalidate_position: bool) -> list[BurstStep]:
         """Single raw burst with state invalidation (send_group_raw on configured channel)."""
-        motion_time = float(self.travel_time) if action in ("UP", "DOWN") else 0.0
+        motion_time = self._motion_time_for(action) if action in ("UP", "DOWN") else 0.0
         return [
             BurstScheduler.fast_step(
                 self.key,
@@ -281,6 +285,20 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         return _do
 
     # ----------------------------------------------------- step helpers
+    def _motion_time_for(self, action: str) -> float:
+        """Settle time after dispatching `action`.
+
+        Collapses to ``at_anchor_settle_time`` when the blind is already at the
+        matching end-state -- the motor just re-anchors instead of traversing.
+        Position is sampled at chain-build time, not at dispatch: a fresh
+        ``submit()`` on the same blind preempts and re-evaluates anyway.
+        """
+        if action == "DOWN" and self._position == 0:
+            return float(self._runtime.at_anchor_settle_time)
+        if action == "UP" and self._position == 100:
+            return float(self._runtime.at_anchor_settle_time)
+        return float(self.travel_time)
+
     def _fast_step(
         self,
         action: str,
@@ -290,7 +308,7 @@ class SunbellBlind(RestoreEntity, CoverEntity):
         return BurstScheduler.fast_step(
             self.key,
             action,
-            motion_time=float(self.travel_time),
+            motion_time=self._motion_time_for(action),
             on_dispatch=self._begin_motion,
             on_complete=on_complete,
         )

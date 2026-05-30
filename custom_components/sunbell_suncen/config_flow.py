@@ -15,6 +15,7 @@ from homeassistant.helpers import entity_registry as er, selector
 
 from ._protocol.channels import parse_channels
 from .const import (
+    CONF_AT_ANCHOR_SETTLE_TIME,
     CONF_BLINDS,
     CONF_CHANNEL,
     CONF_FULL_MOVEMENT_TIME,
@@ -22,6 +23,7 @@ from .const import (
     CONF_REMOTE_ID,
     CONF_REMOTES,
     CONF_TRANSMIT_SERVICE,
+    DEFAULT_AT_ANCHOR_SETTLE_TIME,
     DEFAULT_FULL_MOVEMENT_TIME,
     DOMAIN,
     REMOTES,
@@ -77,6 +79,20 @@ def _merge_channels(
 
 
 def _travel_time_selector() -> selector.NumberSelector:
+    return selector.NumberSelector(
+        selector.NumberSelectorConfig(
+            min=TRAVEL_TIME_MIN,
+            max=TRAVEL_TIME_MAX,
+            step=1,
+            unit_of_measurement="s",
+            mode=selector.NumberSelectorMode.BOX,
+        )
+    )
+
+
+def _at_anchor_settle_time_selector() -> selector.NumberSelector:
+    # Same shape as the travel-time selector; kept separate so the bounds can
+    # diverge later without affecting full_movement_time inputs.
     return selector.NumberSelector(
         selector.NumberSelectorConfig(
             min=TRAVEL_TIME_MIN,
@@ -207,6 +223,7 @@ class SunbellOptionsFlow(OptionsFlow):
                 "edit_remote",
                 "remove_remote",
                 "set_default_travel_time",
+                "set_at_anchor_settle_time",
                 "configure_blind",
                 "reset_entity_names",
             ],
@@ -355,6 +372,28 @@ class SunbellOptionsFlow(OptionsFlow):
             }),
         )
 
+    async def async_step_set_at_anchor_settle_time(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        current = self._current_at_anchor_settle_time()
+        if user_input is not None:
+            new_options = {
+                **self.config_entry.options,
+                CONF_REMOTES: self._current_remotes(),
+                CONF_AT_ANCHOR_SETTLE_TIME: int(user_input[CONF_AT_ANCHOR_SETTLE_TIME]),
+            }
+            return self.async_create_entry(title="", data=new_options)
+
+        return self.async_show_form(
+            step_id="set_at_anchor_settle_time",
+            data_schema=vol.Schema({
+                vol.Required(
+                    CONF_AT_ANCHOR_SETTLE_TIME,
+                    default=current,
+                ): _at_anchor_settle_time_selector(),
+            }),
+        )
+
     async def async_step_configure_blind(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -478,6 +517,14 @@ class SunbellOptionsFlow(OptionsFlow):
         return int(self.config_entry.options.get(
             CONF_FULL_MOVEMENT_TIME,
             self.config_entry.data.get(CONF_FULL_MOVEMENT_TIME, DEFAULT_FULL_MOVEMENT_TIME),
+        ))
+
+    def _current_at_anchor_settle_time(self) -> int:
+        return int(self.config_entry.options.get(
+            CONF_AT_ANCHOR_SETTLE_TIME,
+            self.config_entry.data.get(
+                CONF_AT_ANCHOR_SETTLE_TIME, DEFAULT_AT_ANCHOR_SETTLE_TIME
+            ),
         ))
 
     def _persist_remotes(self, remotes: list[dict[str, Any]]) -> ConfigFlowResult:

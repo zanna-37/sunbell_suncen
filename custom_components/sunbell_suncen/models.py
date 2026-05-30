@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from ._protocol.synth import build_symbol_burst_signed
 from .const import (
     BURST_GAP_SECONDS,
+    CONF_AT_ANCHOR_SETTLE_TIME,
     CONF_BLINDS,
     CONF_CHANNEL,
     CONF_FULL_MOVEMENT_TIME,
@@ -16,6 +17,7 @@ from .const import (
     CONF_REMOTE_ID,
     CONF_REMOTES,
     CONF_TRANSMIT_SERVICE,
+    DEFAULT_AT_ANCHOR_SETTLE_TIME,
     DEFAULT_FULL_MOVEMENT_TIME,
 )
 from .scheduler import BurstScheduler
@@ -46,6 +48,7 @@ class SunbellRuntimeData:
     transmit_queue: TransmitQueue
     scheduler: BurstScheduler
     default_full_movement_time: int
+    at_anchor_settle_time: int
 
     def travel_time_for(self, blind: BlindConfig) -> int:
         """Effective full-movement time for `blind` — its override or the entry default."""
@@ -83,6 +86,9 @@ def build_runtime_data(
     default_full_movement_time = int(
         merged.get(CONF_FULL_MOVEMENT_TIME, DEFAULT_FULL_MOVEMENT_TIME)
     )
+    at_anchor_settle_time = int(
+        merged.get(CONF_AT_ANCHOR_SETTLE_TIME, DEFAULT_AT_ANCHOR_SETTLE_TIME)
+    )
     transmit_queue = TransmitQueue(hass, transmit_service_name)
     scheduler = BurstScheduler(
         hass.loop,
@@ -96,6 +102,7 @@ def build_runtime_data(
         transmit_queue=transmit_queue,
         scheduler=scheduler,
         default_full_movement_time=default_full_movement_time,
+        at_anchor_settle_time=at_anchor_settle_time,
     )
 
 

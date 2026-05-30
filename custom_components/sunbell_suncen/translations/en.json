@@ -37,6 +37,7 @@
           "edit_remote": "Edit a remote's channels",
           "remove_remote": "Remove a remote",
           "set_default_travel_time": "Set default travel time",
+          "set_at_anchor_settle_time": "Set at-anchor settle time",
           "configure_blind": "Configure a blind",
           "reset_entity_names": "Reset entity names to default"
         }
@@ -72,6 +73,13 @@
         "description": "Seconds the motor needs to fully open or close. Blinds without an override use this value.",
         "data": {
           "full_movement_time": "Default full-movement time (seconds)"
+        }
+      },
+      "set_at_anchor_settle_time": {
+        "title": "At-anchor settle time",
+        "description": "Seconds to wait after an UP/DOWN when the blind is already at that end-state (UP on a fully-open blind, DOWN on a fully-closed one). The motor just re-anchors instead of traversing, so the full-movement time would needlessly stall the scheduler.",
+        "data": {
+          "at_anchor_settle_time": "At-anchor settle time (seconds)"
         }
       },
       "configure_blind": {

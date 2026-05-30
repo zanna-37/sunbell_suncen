@@ -37,6 +37,7 @@
           "edit_remote": "Modifica i canali di un radiocomando",
           "remove_remote": "Rimuovi un radiocomando",
           "set_default_travel_time": "Imposta tempo di movimento predefinito",
+          "set_at_anchor_settle_time": "Imposta tempo di assestamento al fine corsa",
           "configure_blind": "Configura una tapparella",
           "reset_entity_names": "Ripristina i nomi predefiniti delle entità"
         }
@@ -72,6 +73,13 @@
         "description": "Secondi che il motore impiega per aprire o chiudere completamente. Le tapparelle senza override usano questo valore.",
         "data": {
           "full_movement_time": "Tempo di movimento completo predefinito (secondi)"
+        }
+      },
+      "set_at_anchor_settle_time": {
+        "title": "Tempo di assestamento al fine corsa",
+        "description": "Secondi di attesa dopo un comando di SU/GIÙ quando la tapparella è già a quel fine corsa (SU su una tapparella già completamente aperta, GIÙ su una già completamente chiusa). Il motore esegue solo un breve ri-ancoraggio invece di percorrere tutta la corsa, quindi il tempo di movimento completo bloccherebbe inutilmente lo scheduler.",
+        "data": {
+          "at_anchor_settle_time": "Tempo di assestamento al fine corsa (secondi)"
         }
       },
       "configure_blind": {
