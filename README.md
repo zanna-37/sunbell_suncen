@@ -130,10 +130,19 @@ data:
 
 To add or remove channels on an existing remote, go to **Settings → Devices &
 Services → Sunbell SUNCEN → Configure → Edit a remote's channels**, pick the
-remote, and enter the full channel list you want (e.g. `1,3,5-8`). Channels you
+remote, and enter the full channel list you want (e.g. `1,3,6,8`). Channels you
 keep retain their name and any per-blind travel-time override; newly added
 channels get a default name; channels you drop have their cover entities removed
 from the registry on the next reload.
+
+## Resetting entity names to default
+
+If you want your cover entities back to a clean default name, go to **Settings →
+Devices & Services → Sunbell SUNCEN → Configure → Reset entity names to default**
+and confirm. This sets every Sunbell cover entity to `R<remote>
+ch<channel>`, replacing both any custom name you set and Home Assistant's
+default device-prefixed name (`Sunbell SUNCEN remote <remote> R<remote>
+ch<channel>`). Entities already at that name are left untouched.
 
 ## Removing a remote
 

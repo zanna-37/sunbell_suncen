@@ -37,7 +37,8 @@
           "edit_remote": "Modifica i canali di un radiocomando",
           "remove_remote": "Rimuovi un radiocomando",
           "set_default_travel_time": "Imposta tempo di movimento predefinito",
-          "configure_blind": "Configura una tapparella"
+          "configure_blind": "Configura una tapparella",
+          "reset_entity_names": "Ripristina i nomi predefiniti delle entità"
         }
       },
       "add_remote": {
@@ -87,6 +88,10 @@
           "full_movement_time": "Tempo di movimento completo (secondi)",
           "use_default": "Usa il valore predefinito"
         }
+      },
+      "reset_entity_names": {
+        "title": "Ripristina i nomi predefiniti delle entità",
+        "description": "Ricalcola i nomi di {count} entità cover Sunbell usando la formula di default attuale dell'integrazione e scrive il risultato nel registro entità, sostituendo eventuali rinomine dell'utente. Copre anche le entità create con un default precedente. Invia per confermare."
       }
     },
     "error": {
@@ -97,7 +102,8 @@
     "abort": {
       "no_remote_to_edit": "Nessun radiocomando da modificare.",
       "no_remote_to_remove": "Nessun radiocomando configurato.",
-      "no_blinds": "Nessuna tapparella configurata."
+      "no_blinds": "Nessuna tapparella configurata.",
+      "no_entities": "I nomi delle entità sono già quelli predefiniti."
     }
   },
   "services": {

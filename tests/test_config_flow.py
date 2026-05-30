@@ -87,7 +87,7 @@ def test_merge_channels_adds_new_with_default_name() -> None:
     existing = [_blind(1, "Kitchen")]
     merged = _merge_channels(existing, [1, 3], "5")
     assert merged[0] == _blind(1, "Kitchen")
-    assert merged[1] == {CONF_CHANNEL: 3, CONF_NAME: "Sunbell R5 ch3"}
+    assert merged[1] == {CONF_CHANNEL: 3, CONF_NAME: "R5 ch3"}
 
 
 def test_merge_channels_drops_removed_blinds() -> None:

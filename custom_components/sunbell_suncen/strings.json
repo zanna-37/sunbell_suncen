@@ -37,7 +37,8 @@
           "edit_remote": "Edit a remote's channels",
           "remove_remote": "Remove a remote",
           "set_default_travel_time": "Set default travel time",
-          "configure_blind": "Configure a blind"
+          "configure_blind": "Configure a blind",
+          "reset_entity_names": "Reset entity names to default"
         }
       },
       "add_remote": {
@@ -87,6 +88,10 @@
           "full_movement_time": "Full-movement time (seconds)",
           "use_default": "Use the entry default"
         }
+      },
+      "reset_entity_names": {
+        "title": "Reset entity names to default",
+        "description": "Re-derive {count} Sunbell cover entity name(s) from the integration's current default formula and write the result to the entity registry, replacing any user rename. Also covers entities that were created under an older default. Submit to confirm."
       }
     },
     "error": {
@@ -97,7 +102,8 @@
     "abort": {
       "no_remote_to_edit": "No remotes configured yet.",
       "no_remote_to_remove": "No remotes configured yet.",
-      "no_blinds": "No blinds configured yet."
+      "no_blinds": "No blinds configured yet.",
+      "no_entities": "Entity names are already at their default."
     }
   },
   "services": {

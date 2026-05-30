@@ -11,7 +11,7 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import selector
+from homeassistant.helpers import entity_registry as er, selector
 
 from ._protocol.channels import parse_channels
 from .const import (
@@ -45,11 +45,11 @@ def _list_transmit_services(hass: HomeAssistant) -> list[str]:
 
 def _default_blind_name(remote_id: str, channel: int) -> str:
     """Default blind name; user can rename in HA's entity UI."""
-    return f"Sunbell R{remote_id} ch{channel}"
+    return f"R{remote_id} ch{channel}"
 
 
 def _channels_to_blinds(channels: list[int], remote_id: str) -> list[dict[str, Any]]:
-    """Default name = 'Sunbell R{remote} ch{channel}'; user can rename in HA's entity UI."""
+    """Default name = 'R{remote} ch{channel}'; user can rename in HA's entity UI."""
     return [
         {CONF_CHANNEL: c, CONF_NAME: _default_blind_name(remote_id, c)}
         for c in channels
@@ -208,6 +208,7 @@ class SunbellOptionsFlow(OptionsFlow):
                 "remove_remote",
                 "set_default_travel_time",
                 "configure_blind",
+                "reset_entity_names",
             ],
         )
 
@@ -416,6 +417,55 @@ class SunbellOptionsFlow(OptionsFlow):
             },
         )
 
+    async def async_step_reset_entity_names(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Reset every cover entity's name to the current ``_default_blind_name(remote, channel)``.
+
+        The reset re-derives the desired name from the formula every time —
+        deliberately not from ``original_name``, which is the cached value
+        from when the entity was last registered and can lag behind code-level
+        changes to the formula. So this handles both:
+
+        - User-renamed entities (``RegistryEntry.name`` overrides the default)
+          go back to the current default.
+        - Entities created under an older formula get bumped to the new one
+          without having to delete and re-add them.
+
+        Writes the override to the registry (so the friendly_name is the bare
+        default, not the device-composed form) and updates ``blind.name`` in
+        the config so the next reload re-registers ``original_name`` to match.
+        """
+        ent_reg = er.async_get(self.hass)
+        entities = er.async_entries_for_config_entry(
+            ent_reg, self.config_entry.entry_id
+        )
+        plans: list[tuple[er.RegistryEntry, str, int, str]] = []
+        for entry in entities:
+            parsed = _parse_blind_unique_id(entry.unique_id)
+            if parsed is None:
+                continue
+            remote_id, channel = parsed
+            desired = _default_blind_name(remote_id, channel)
+            if entry.name != desired:
+                plans.append((entry, remote_id, channel, desired))
+        if not plans:
+            return self.async_abort(reason="no_entities")
+
+        if user_input is not None:
+            for entry, _remote_id, _channel, desired in plans:
+                ent_reg.async_update_entity(entry.entity_id, name=desired)
+            remotes = self._current_remotes()
+            for _entry, remote_id, channel, desired in plans:
+                remotes = _apply_blind_name(remotes, remote_id, channel, desired)
+            return self._persist_remotes(remotes)
+
+        return self.async_show_form(
+            step_id="reset_entity_names",
+            data_schema=vol.Schema({}),
+            description_placeholders={"count": str(len(plans))},
+        )
+
     # --- internal helpers ---------------------------------------------------
 
     def _current_remotes(self) -> list[dict[str, Any]]:
@@ -437,6 +487,40 @@ class SunbellOptionsFlow(OptionsFlow):
             CONF_FULL_MOVEMENT_TIME: self._current_default_travel_time(),
         }
         return self.async_create_entry(title="", data=new_options)
+
+
+def _parse_blind_unique_id(unique_id: str) -> tuple[str, int] | None:
+    """Parse the cover entity's unique_id (``f"{remote}_ch{channel}"``).
+
+    Returns None for any unique_id that doesn't match the expected shape,
+    which is how we ignore registry entries from past schema variants.
+    """
+    remote_id, sep, ch_str = unique_id.partition("_ch")
+    if not sep or not remote_id:
+        return None
+    try:
+        return remote_id, int(ch_str)
+    except ValueError:
+        return None
+
+
+def _apply_blind_name(
+    remotes: list[dict[str, Any]], remote_id: str, channel: int, name: str
+) -> list[dict[str, Any]]:
+    """Return a new remotes list with ``blind.name`` set on the matching blind."""
+    out: list[dict[str, Any]] = []
+    for rc in remotes:
+        if rc[CONF_REMOTE_ID] != remote_id:
+            out.append(rc)
+            continue
+        new_blinds: list[dict[str, Any]] = []
+        for b in rc.get(CONF_BLINDS, []):
+            if int(b[CONF_CHANNEL]) != channel:
+                new_blinds.append(b)
+                continue
+            new_blinds.append({**b, CONF_NAME: name})
+        out.append({**rc, CONF_BLINDS: new_blinds})
+    return out
 
 
 def _find_blind_override(
